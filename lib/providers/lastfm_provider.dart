@@ -13,16 +13,16 @@ final lastfmStateProvider =
 });
 
 class LastfmState {
-  final bool hasCredentials;
   final bool isAuthenticated;
+  final bool hasPendingToken;
   final String? username;
   final UserInfo? userInfo;
   final bool isLoading;
   final String? error;
 
   LastfmState({
-    this.hasCredentials = false,
     this.isAuthenticated = false,
+    this.hasPendingToken = false,
     this.username,
     this.userInfo,
     this.isLoading = false,
@@ -30,8 +30,8 @@ class LastfmState {
   });
 
   LastfmState copyWith({
-    bool? hasCredentials,
     bool? isAuthenticated,
+    bool? hasPendingToken,
     String? username,
     UserInfo? userInfo,
     bool? isLoading,
@@ -40,8 +40,8 @@ class LastfmState {
     bool clearUserInfo = false,
   }) {
     return LastfmState(
-      hasCredentials: hasCredentials ?? this.hasCredentials,
       isAuthenticated: isAuthenticated ?? this.isAuthenticated,
+      hasPendingToken: hasPendingToken ?? this.hasPendingToken,
       username: username ?? this.username,
       userInfo: clearUserInfo ? null : (userInfo ?? this.userInfo),
       isLoading: isLoading ?? this.isLoading,
@@ -59,32 +59,10 @@ class LastfmStateNotifier extends StateNotifier<LastfmState> {
 
   void _refreshState() {
     state = state.copyWith(
-      hasCredentials: _service.hasCredentials,
       isAuthenticated: _service.isAuthenticated,
+      hasPendingToken: _service.hasPendingToken,
       username: _service.username,
     );
-  }
-
-  Future<void> saveCredentials({
-    required String apiKey,
-    required String apiSecret,
-  }) async {
-    state = state.copyWith(isLoading: true, clearError: true);
-
-    try {
-      await _service.saveCredentials(
-        apiKey: apiKey,
-        apiSecret: apiSecret,
-      );
-      _refreshState();
-    } catch (e) {
-      state = state.copyWith(
-        isLoading: false,
-        error: 'Failed to save credentials: ${e.toString()}',
-      );
-    }
-
-    state = state.copyWith(isLoading: false);
   }
 
   Future<void> startAuth() async {
@@ -92,6 +70,7 @@ class LastfmStateNotifier extends StateNotifier<LastfmState> {
 
     try {
       await _service.startAuthFlow();
+      _refreshState();
     } catch (e) {
       state = state.copyWith(
         error: 'Failed to start authentication: ${e.toString()}',
@@ -101,17 +80,17 @@ class LastfmStateNotifier extends StateNotifier<LastfmState> {
     state = state.copyWith(isLoading: false);
   }
 
-  Future<bool> completeAuth(String token) async {
+  Future<bool> completeAuth() async {
     state = state.copyWith(isLoading: true, clearError: true);
 
     try {
-      final success = await _service.completeAuth(token);
+      final success = await _service.completeAuth();
       if (success) {
         _refreshState();
         await fetchUserInfo();
       } else {
         state = state.copyWith(
-          error: 'Failed to authenticate with Last.fm',
+          error: 'Failed to authenticate with Last.fm. Make sure you authorized the app in the browser.',
         );
       }
       state = state.copyWith(isLoading: false);
@@ -123,6 +102,11 @@ class LastfmStateNotifier extends StateNotifier<LastfmState> {
       );
       return false;
     }
+  }
+
+  Future<void> cancelAuth() async {
+    await _service.cancelAuth();
+    _refreshState();
   }
 
   Future<void> fetchUserInfo() async {
@@ -141,20 +125,12 @@ class LastfmStateNotifier extends StateNotifier<LastfmState> {
 
     try {
       await _service.logout();
-      state = LastfmState(
-        hasCredentials: _service.hasCredentials,
-        isAuthenticated: false,
-      );
+      state = LastfmState(isAuthenticated: false);
     } catch (e) {
       state = state.copyWith(
         isLoading: false,
         error: 'Failed to logout: ${e.toString()}',
       );
     }
-  }
-
-  Future<void> clearAll() async {
-    await _service.clearAll();
-    state = LastfmState();
   }
 }

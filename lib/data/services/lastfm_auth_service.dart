@@ -2,43 +2,26 @@ import 'dart:async';
 import 'package:hive/hive.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../repositories/lastfm_repository.dart';
+import '../../core/constants/lastfm_config.dart';
 
 class LastfmAuthService {
   static const _boxName = 'lastfm_settings';
   static const _sessionKeyKey = 'session_key';
   static const _usernameKey = 'username';
-  static const _apiKeyKey = 'api_key';
-  static const _apiSecretKey = 'api_secret';
+  static const _pendingTokenKey = 'pending_token';
 
   Box? _box;
-  LastfmRepository? _repository;
+  late final LastfmRepository _repository;
 
   Future<void> init() async {
     _box = await Hive.openBox(_boxName);
-    _initRepository();
-  }
-
-  void _initRepository() {
-    final apiKey = _box?.get(_apiKeyKey) as String?;
-    final apiSecret = _box?.get(_apiSecretKey) as String?;
     final sessionKey = _box?.get(_sessionKeyKey) as String?;
 
-    if (apiKey != null && apiSecret != null) {
-      _repository = LastfmRepository(
-        apiKey: apiKey,
-        apiSecret: apiSecret,
-        sessionKey: sessionKey,
-      );
-    }
-  }
-
-  bool get hasCredentials {
-    final apiKey = _box?.get(_apiKeyKey) as String?;
-    final apiSecret = _box?.get(_apiSecretKey) as String?;
-    return apiKey != null &&
-        apiKey.isNotEmpty &&
-        apiSecret != null &&
-        apiSecret.isNotEmpty;
+    _repository = LastfmRepository(
+      apiKey: LastfmConfig.apiKey,
+      apiSecret: LastfmConfig.sharedSecret,
+      sessionKey: sessionKey,
+    );
   }
 
   bool get isAuthenticated {
@@ -47,27 +30,25 @@ class LastfmAuthService {
   }
 
   String? get username => _box?.get(_usernameKey) as String?;
-  String? get apiKey => _box?.get(_apiKeyKey) as String?;
-  String? get apiSecret => _box?.get(_apiSecretKey) as String?;
   String? get sessionKey => _box?.get(_sessionKeyKey) as String?;
+  String? get pendingToken => _box?.get(_pendingTokenKey) as String?;
+  bool get hasPendingToken => pendingToken != null && pendingToken!.isNotEmpty;
 
-  LastfmRepository? get repository => _repository;
+  LastfmRepository get repository => _repository;
 
-  Future<void> saveCredentials({
-    required String apiKey,
-    required String apiSecret,
-  }) async {
-    await _box?.put(_apiKeyKey, apiKey);
-    await _box?.put(_apiSecretKey, apiSecret);
-    _initRepository();
-  }
-
+  /// Step 1: Get token from Last.fm and open browser for authorization
   Future<void> startAuthFlow() async {
-    if (_repository == null) {
-      throw StateError('API credentials not set');
+    // Get an unauthorized token from Last.fm
+    final token = await _repository.getToken();
+    if (token == null) {
+      throw Exception('Failed to get token from Last.fm');
     }
 
-    final url = _repository!.getAuthUrl();
+    // Store the token for later use
+    await _box?.put(_pendingTokenKey, token);
+
+    // Open browser for user to authorize the token
+    final url = _repository.getAuthUrl(token);
     final uri = Uri.parse(url);
 
     if (await canLaunchUrl(uri)) {
@@ -77,32 +58,36 @@ class LastfmAuthService {
     }
   }
 
-  Future<bool> completeAuth(String token) async {
-    if (_repository == null) {
-      throw StateError('API credentials not set');
+  /// Step 2: After user authorizes in browser, exchange token for session
+  Future<bool> completeAuth() async {
+    final token = pendingToken;
+    if (token == null || token.isEmpty) {
+      throw StateError('No pending token. Start auth flow first.');
     }
 
-    final session = await _repository!.getSession(token);
+    final session = await _repository.getSession(token);
     if (session != null) {
       await _box?.put(_sessionKeyKey, session.key);
       await _box?.put(_usernameKey, session.name);
+      await _box?.delete(_pendingTokenKey);
+      _repository.setSessionKey(session.key);
       return true;
     }
     return false;
   }
 
+  Future<void> cancelAuth() async {
+    await _box?.delete(_pendingTokenKey);
+  }
+
   Future<void> logout() async {
     await _box?.delete(_sessionKeyKey);
     await _box?.delete(_usernameKey);
-    _repository?.setSessionKey(null);
-  }
-
-  Future<void> clearAll() async {
-    await _box?.clear();
-    _repository = null;
+    await _box?.delete(_pendingTokenKey);
+    _repository.setSessionKey(null);
   }
 
   Future<UserInfo?> getUserInfo() async {
-    return _repository?.getUserInfo();
+    return _repository.getUserInfo();
   }
 }

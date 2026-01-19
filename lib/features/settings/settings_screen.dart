@@ -24,9 +24,7 @@ class SettingsScreen extends ConsumerWidget {
             subtitle: Text(
               lastfmState.isAuthenticated
                   ? 'Connected as ${lastfmState.username}'
-                  : lastfmState.hasCredentials
-                      ? 'Not connected'
-                      : 'Configure API credentials',
+                  : 'Tap to connect your account',
             ),
             trailing: lastfmState.isAuthenticated
                 ? Icon(

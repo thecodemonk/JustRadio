@@ -137,7 +137,7 @@ class RadioPlayerController extends StateNotifier<RadioPlayerState> {
 
     final lastfmService = _ref.read(lastfmAuthServiceProvider);
     if (lastfmService.isAuthenticated) {
-      await lastfmService.repository?.updateNowPlaying(
+      await lastfmService.repository.updateNowPlaying(
         artist: nowPlaying.artist,
         track: nowPlaying.title,
       );
@@ -150,12 +150,11 @@ class RadioPlayerController extends StateNotifier<RadioPlayerState> {
 
     final lastfmService = _ref.read(lastfmAuthServiceProvider);
     if (lastfmService.isAuthenticated) {
-      final success = await lastfmService.repository?.scrobble(
-            artist: track.artist,
-            track: track.title,
-            timestamp: timestamp.millisecondsSinceEpoch ~/ 1000,
-          ) ??
-          false;
+      final success = await lastfmService.repository.scrobble(
+        artist: track.artist,
+        track: track.title,
+        timestamp: timestamp.millisecondsSinceEpoch ~/ 1000,
+      );
 
       if (success) {
         _lastScrobbledTrack = track;

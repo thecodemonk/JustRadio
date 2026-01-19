@@ -27,12 +27,32 @@ class LastfmRepository {
 
   bool get isAuthenticated => _sessionKey != null && _sessionKey!.isNotEmpty;
 
-  /// Get authentication URL for user to authorize
-  String getAuthUrl() {
-    return '${ApiConstants.lastfmAuthUrl}?api_key=$apiKey';
+  /// Step 1: Get an unauthorized token from Last.fm
+  Future<String?> getToken() async {
+    final params = {
+      'method': 'auth.getToken',
+      'api_key': apiKey,
+    };
+
+    final signature = Md5Helper.generateLastfmSignature(params, apiSecret);
+    params['api_sig'] = signature;
+    params['format'] = 'json';
+
+    try {
+      final response = await _dio.get('', queryParameters: params);
+      final data = response.data;
+      return data['token'] as String?;
+    } catch (e) {
+      return null;
+    }
   }
 
-  /// Get session key from token (after user authorization)
+  /// Step 2: Get authentication URL for user to authorize the token
+  String getAuthUrl(String token) {
+    return '${ApiConstants.lastfmAuthUrl}?api_key=$apiKey&token=$token';
+  }
+
+  /// Step 3: Exchange authorized token for session key
   Future<SessionInfo?> getSession(String token) async {
     final params = {
       'method': 'auth.getSession',
@@ -57,7 +77,7 @@ class LastfmRepository {
         );
       }
     } catch (e) {
-      // Handle error
+      rethrow;
     }
     return null;
   }
