@@ -40,9 +40,14 @@ dependencies:
   hive: ^2.2.3
   hive_flutter: ^1.1.0
 
-  # Audio Playback
-  just_audio: ^0.9.39
-  just_audio_background: ^0.0.1-beta.13
+  # Audio Playback (media_kit for better ICY metadata support)
+  # Using full libs (not audio-only) for HLS/FLAC support
+  media_kit: ^1.1.11
+  media_kit_libs_macos_video: ^1.1.4
+  media_kit_libs_ios_video: ^1.1.4
+  media_kit_libs_windows_video: ^1.0.9
+  media_kit_libs_linux: ^1.1.3
+  media_kit_libs_android_video: ^1.3.6
   audio_service: ^0.18.15
 
   # HTTP Client

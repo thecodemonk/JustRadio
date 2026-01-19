@@ -1,99 +1,156 @@
 import 'dart:async';
-import 'package:just_audio/just_audio.dart';
-import 'package:just_audio_background/just_audio_background.dart';
+import 'package:media_kit/media_kit.dart';
 import '../models/radio_station.dart';
 import '../models/now_playing.dart';
 
+enum PlaybackState {
+  idle,
+  loading,
+  playing,
+  paused,
+  stopped,
+  error,
+}
+
 class AudioPlayerService {
-  final AudioPlayer _player;
+  final Player _player;
   RadioStation? _currentStation;
   final _nowPlayingController = StreamController<NowPlaying>.broadcast();
   final _stationController = StreamController<RadioStation?>.broadcast();
-  Timer? _metadataTimer;
+  final _playbackStateController = StreamController<PlaybackState>.broadcast();
+  final _playingController = StreamController<bool>.broadcast();
 
-  AudioPlayerService() : _player = AudioPlayer();
+  StreamSubscription? _playingSubscription;
+  StreamSubscription? _errorSubscription;
+  String _lastMetadata = '';
+  bool _observingProperty = false;
 
-  static Future<void> init() async {
-    await JustAudioBackground.init(
-      androidNotificationChannelId: 'com.justradio.channel.audio',
-      androidNotificationChannelName: 'JustRadio',
-      androidNotificationOngoing: true,
-      androidStopForegroundOnPause: true,
-    );
+  AudioPlayerService() : _player = Player() {
+    _initListeners();
   }
 
-  AudioPlayer get player => _player;
+  static Future<void> init() async {
+    MediaKit.ensureInitialized();
+  }
+
+  Player get player => _player;
   RadioStation? get currentStation => _currentStation;
   Stream<NowPlaying> get nowPlayingStream => _nowPlayingController.stream;
   Stream<RadioStation?> get stationStream => _stationController.stream;
-  Stream<PlayerState> get playerStateStream => _player.playerStateStream;
-  Stream<bool> get playingStream => _player.playingStream;
-  Stream<Duration?> get positionStream => _player.positionStream;
+  Stream<PlaybackState> get playbackStateStream => _playbackStateController.stream;
+  Stream<bool> get playingStream => _playingController.stream;
 
-  bool get isPlaying => _player.playing;
+  bool get isPlaying => _player.state.playing;
+
+  void _initListeners() {
+    _playingSubscription = _player.stream.playing.listen((playing) {
+      _playingController.add(playing);
+      if (playing) {
+        _playbackStateController.add(PlaybackState.playing);
+      } else if (_currentStation != null) {
+        _playbackStateController.add(PlaybackState.paused);
+      }
+    });
+
+    _errorSubscription = _player.stream.error.listen((error) {
+      if (error.isNotEmpty) {
+        print('Player error: $error');
+        _playbackStateController.add(PlaybackState.error);
+        _nowPlayingController.add(NowPlaying.empty());
+      }
+    });
+
+    // Listen for log messages from mpv
+    _player.stream.log.listen((log) {
+      print('mpv log [${log.level}]: ${log.prefix} - ${log.text}');
+    });
+  }
+
+  Future<void> _setupMetadataObserver() async {
+    if (_observingProperty) return;
+
+    try {
+      final platform = _player.platform;
+      if (platform is NativePlayer) {
+        // Observe the media-title property which mpv populates from ICY metadata
+        await platform.observeProperty(
+          'media-title',
+          (String? value) async {
+            if (value != null && value.isNotEmpty && value != _lastMetadata) {
+              _lastMetadata = value;
+              _processMetadata(value);
+            }
+          },
+        );
+        _observingProperty = true;
+
+        // Also try observing the specific ICY title property
+        await platform.observeProperty(
+          'metadata/by-key/icy-title',
+          (String? value) async {
+            if (value != null && value.isNotEmpty && value != _lastMetadata) {
+              _lastMetadata = value;
+              _processMetadata(value);
+            }
+          },
+        );
+      }
+    } catch (e) {
+      // Property observation might not be available on all platforms
+      print('Could not setup metadata observer: $e');
+    }
+  }
 
   Future<void> playStation(RadioStation station) async {
     _currentStation = station;
     _stationController.add(station);
-
-    final mediaItem = MediaItem(
-      id: station.stationuuid,
-      title: station.name,
-      artist: station.tags.isNotEmpty ? station.tagList.first : 'Radio',
-      artUri: station.favicon.isNotEmpty ? Uri.tryParse(station.favicon) : null,
-      extras: {'url': station.streamUrl},
-    );
+    _nowPlayingController.add(NowPlaying.empty());
+    _playbackStateController.add(PlaybackState.loading);
+    _lastMetadata = '';
 
     try {
-      final audioSource = AudioSource.uri(
-        Uri.parse(station.streamUrl),
-        tag: mediaItem,
+      // Setup metadata observer before playing
+      await _setupMetadataObserver();
+
+      // Open the stream URL
+      final media = Media(
+        station.streamUrl,
+        httpHeaders: {
+          'Icy-MetaData': '1',
+        },
       );
 
-      await _player.setAudioSource(audioSource);
-      await _player.play();
-
-      _startMetadataListener();
+      print('Playing stream: ${station.streamUrl}');
+      await _player.open(media, play: true);
+      print('Stream opened successfully');
     } catch (e) {
+      print('Error playing stream: $e');
+      _playbackStateController.add(PlaybackState.error);
       _nowPlayingController.add(NowPlaying.empty());
       rethrow;
     }
   }
 
-  void _startMetadataListener() {
-    _metadataTimer?.cancel();
+  void _processMetadata(String title) {
+    NowPlaying nowPlaying;
 
-    // Listen to ICY metadata from the stream
-    _player.icyMetadataStream.listen((metadata) {
-      if (metadata != null) {
-        final nowPlaying = NowPlaying(
-          title: metadata.info?.title ?? '',
-          artist: '',
-          rawMetadata: metadata.info?.title ?? '',
-        );
+    // Try to parse "Artist - Title" format
+    if (title.contains(' - ')) {
+      final parts = title.split(' - ');
+      nowPlaying = NowPlaying(
+        artist: parts[0].trim(),
+        title: parts.sublist(1).join(' - ').trim(),
+        rawMetadata: title,
+      );
+    } else {
+      nowPlaying = NowPlaying(
+        title: title,
+        artist: '',
+        rawMetadata: title,
+      );
+    }
 
-        // Try to parse artist - title format
-        final title = metadata.info?.title ?? '';
-        if (title.contains(' - ')) {
-          final parts = title.split(' - ');
-          final parsed = NowPlaying(
-            artist: parts[0].trim(),
-            title: parts.sublist(1).join(' - ').trim(),
-            rawMetadata: title,
-          );
-          _nowPlayingController.add(parsed);
-          _updateMediaItemWithMetadata(parsed);
-        } else {
-          _nowPlayingController.add(nowPlaying);
-          _updateMediaItemWithMetadata(nowPlaying);
-        }
-      }
-    });
-  }
-
-  void _updateMediaItemWithMetadata(NowPlaying nowPlaying) {
-    // Note: Media notification updates are handled automatically by just_audio_background
-    // through the MediaItem tag set on the audio source
+    _nowPlayingController.add(nowPlaying);
   }
 
   Future<void> play() async {
@@ -105,29 +162,29 @@ class AudioPlayerService {
   }
 
   Future<void> stop() async {
-    _metadataTimer?.cancel();
     await _player.stop();
     _currentStation = null;
     _stationController.add(null);
     _nowPlayingController.add(NowPlaying.empty());
+    _playbackStateController.add(PlaybackState.stopped);
+    _lastMetadata = '';
   }
 
   Future<void> togglePlayPause() async {
-    if (_player.playing) {
-      await pause();
-    } else {
-      await play();
-    }
+    await _player.playOrPause();
   }
 
   Future<void> setVolume(double volume) async {
-    await _player.setVolume(volume.clamp(0.0, 1.0));
+    await _player.setVolume(volume.clamp(0.0, 1.0) * 100);
   }
 
   void dispose() {
-    _metadataTimer?.cancel();
+    _playingSubscription?.cancel();
+    _errorSubscription?.cancel();
     _nowPlayingController.close();
     _stationController.close();
+    _playbackStateController.close();
+    _playingController.close();
     _player.dispose();
   }
 }

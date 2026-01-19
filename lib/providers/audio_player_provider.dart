@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:just_audio/just_audio.dart';
 import '../data/models/radio_station.dart';
 import '../data/models/now_playing.dart';
 import '../data/services/audio_player_service.dart';
@@ -23,9 +22,9 @@ final nowPlayingProvider = StreamProvider<NowPlaying>((ref) {
   return service.nowPlayingStream;
 });
 
-final playerStateProvider = StreamProvider<PlayerState>((ref) {
+final playbackStateProvider = StreamProvider<PlaybackState>((ref) {
   final service = ref.watch(audioPlayerServiceProvider);
-  return service.playerStateStream;
+  return service.playbackStateStream;
 });
 
 final isPlayingProvider = StreamProvider<bool>((ref) {
@@ -74,7 +73,7 @@ class RadioPlayerState {
 
 class RadioPlayerController extends StateNotifier<RadioPlayerState> {
   final Ref _ref;
-  StreamSubscription? _playerStateSubscription;
+  StreamSubscription? _playbackStateSubscription;
   StreamSubscription? _stationSubscription;
   StreamSubscription? _nowPlayingSubscription;
   DateTime? _trackStartTime;
@@ -88,16 +87,15 @@ class RadioPlayerController extends StateNotifier<RadioPlayerState> {
       _ref.read(audioPlayerServiceProvider);
 
   void _initListeners() {
-    _playerStateSubscription = _playerService.playerStateStream.listen((state) {
-      this.state = this.state.copyWith(
-        isPlaying: state.playing,
-        isLoading: state.processingState == ProcessingState.loading ||
-            state.processingState == ProcessingState.buffering,
+    _playbackStateSubscription = _playerService.playbackStateStream.listen((playbackState) {
+      state = state.copyWith(
+        isPlaying: playbackState == PlaybackState.playing,
+        isLoading: playbackState == PlaybackState.loading,
       );
     });
 
     _stationSubscription = _playerService.stationStream.listen((station) {
-      this.state = this.state.copyWith(
+      state = state.copyWith(
         currentStation: station,
         clearStation: station == null,
       );
@@ -105,7 +103,7 @@ class RadioPlayerController extends StateNotifier<RadioPlayerState> {
 
     _nowPlayingSubscription = _playerService.nowPlayingStream.listen((nowPlaying) {
       final previousNowPlaying = state.nowPlaying;
-      this.state = this.state.copyWith(nowPlaying: nowPlaying);
+      state = state.copyWith(nowPlaying: nowPlaying);
 
       // Handle Last.fm integration
       if (nowPlaying.isNotEmpty && nowPlaying != previousNowPlaying) {
@@ -208,7 +206,7 @@ class RadioPlayerController extends StateNotifier<RadioPlayerState> {
 
   @override
   void dispose() {
-    _playerStateSubscription?.cancel();
+    _playbackStateSubscription?.cancel();
     _stationSubscription?.cancel();
     _nowPlayingSubscription?.cancel();
     super.dispose();
