@@ -216,3 +216,19 @@ class RadioPlayerController extends StateNotifier<RadioPlayerState> {
 final radioBrowserRepositoryProvider = Provider<RadioBrowserRepository>((ref) {
   return RadioBrowserRepository();
 });
+
+// Volume control provider
+final volumeProvider = StateNotifierProvider<VolumeController, double>((ref) {
+  return VolumeController(ref);
+});
+
+class VolumeController extends StateNotifier<double> {
+  final Ref _ref;
+
+  VolumeController(this._ref) : super(1.0);
+
+  Future<void> setVolume(double volume) async {
+    state = volume.clamp(0.0, 1.0);
+    await _ref.read(audioPlayerServiceProvider).setVolume(state);
+  }
+}

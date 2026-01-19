@@ -48,15 +48,15 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
         ],
       ),
       body: SafeArea(
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(24.0),
           child: Column(
             children: [
-              const Spacer(),
+              const SizedBox(height: 16),
 
               // Station artwork
               _buildArtwork(context),
-              const SizedBox(height: 32),
+              const SizedBox(height: 24),
 
               // Station name
               Text(
@@ -77,7 +77,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
               // Station details
               _buildStationDetails(context),
 
-              const Spacer(),
+              const SizedBox(height: 32),
 
               // Error message
               if (playerState.error != null)
@@ -98,11 +98,44 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
               // Player controls
               _buildPlayerControls(context, playerState),
 
-              const SizedBox(height: 32),
+              const SizedBox(height: 24),
+
+              // Volume control
+              _buildVolumeControl(context),
+
+              const SizedBox(height: 16),
             ],
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildVolumeControl(BuildContext context) {
+    final volume = ref.watch(volumeProvider);
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Row(
+      children: [
+        Icon(
+          volume == 0 ? Icons.volume_off : Icons.volume_down,
+          color: colorScheme.onSurfaceVariant,
+          size: 20,
+        ),
+        Expanded(
+          child: Slider(
+            value: volume,
+            onChanged: (value) {
+              ref.read(volumeProvider.notifier).setVolume(value);
+            },
+          ),
+        ),
+        Icon(
+          Icons.volume_up,
+          color: colorScheme.onSurfaceVariant,
+          size: 20,
+        ),
+      ],
     );
   }
 
