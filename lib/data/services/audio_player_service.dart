@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:media_kit/media_kit.dart';
 import '../models/radio_station.dart';
 import '../models/now_playing.dart';
@@ -175,7 +176,13 @@ class AudioPlayerService {
   }
 
   Future<void> setVolume(double volume) async {
-    await _player.setVolume(volume.clamp(0.0, 1.0) * 100);
+    // Apply logarithmic curve for perceptually linear volume control.
+    // Human hearing is logarithmic, so a linear slider feels wrong.
+    // This formula maps linear 0-1 to a curve where the midpoint
+    // gives more perceived volume (slider 0.5 → ~74% actual volume).
+    final linear = volume.clamp(0.0, 1.0);
+    final logarithmic = linear <= 0 ? 0.0 : math.log(1 + linear * 9) / math.log(10);
+    await _player.setVolume(logarithmic * 100);
   }
 
   void dispose() {

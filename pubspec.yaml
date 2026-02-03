@@ -57,6 +57,9 @@ dependencies:
   crypto: ^3.0.3
   url_launcher: ^6.2.5
 
+  # Window Management (desktop)
+  window_manager: ^0.4.3
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
