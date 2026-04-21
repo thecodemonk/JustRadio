@@ -1,12 +1,23 @@
+import 'dart:async';
 import 'package:dio/dio.dart';
 import '../../core/constants/api_constants.dart';
 import '../../core/utils/md5_helper.dart';
+
+/// Last.fm error code for a session key that has been revoked or is otherwise
+/// no longer valid. See https://www.last.fm/api/errorcodes
+const int kLastfmInvalidSessionError = 9;
 
 class LastfmRepository {
   final Dio _dio;
   final String apiKey;
   final String apiSecret;
   String? _sessionKey;
+
+  // Fires when the server reports error 9 ("Invalid session key"). The auth
+  // service subscribes so it can clear local credentials and let the UI
+  // prompt the user to re-link.
+  final _invalidSessionController = StreamController<void>.broadcast();
+  Stream<void> get invalidSessionStream => _invalidSessionController.stream;
 
   LastfmRepository({
     required this.apiKey,
@@ -26,6 +37,20 @@ class LastfmRepository {
   }
 
   bool get isAuthenticated => _sessionKey != null && _sessionKey!.isNotEmpty;
+
+  void dispose() {
+    _invalidSessionController.close();
+  }
+
+  // Last.fm returns HTTP 200 even for API errors; check the JSON body.
+  bool _checkInvalidSession(dynamic body) {
+    if (body is Map && body['error'] == kLastfmInvalidSessionError) {
+      _sessionKey = null;
+      _invalidSessionController.add(null);
+      return true;
+    }
+    return false;
+  }
 
   /// Step 1: Get an unauthorized token from Last.fm
   Future<String?> getToken() async {
@@ -113,6 +138,7 @@ class LastfmRepository {
           contentType: Headers.formUrlEncodedContentType,
         ),
       );
+      if (_checkInvalidSession(response.data)) return false;
       return response.data['nowplaying'] != null;
     } catch (e) {
       return false;
@@ -152,6 +178,7 @@ class LastfmRepository {
           contentType: Headers.formUrlEncodedContentType,
         ),
       );
+      if (_checkInvalidSession(response.data)) return false;
       return response.data['scrobbles'] != null;
     } catch (e) {
       return false;
@@ -199,6 +226,7 @@ class LastfmRepository {
           contentType: Headers.formUrlEncodedContentType,
         ),
       );
+      if (_checkInvalidSession(response.data)) return false;
       return response.statusCode == 200 && response.data['error'] == null;
     } catch (e) {
       return false;
@@ -243,6 +271,7 @@ class LastfmRepository {
     try {
       final response = await _dio.get('', queryParameters: params);
       final data = response.data;
+      if (_checkInvalidSession(data)) return null;
 
       if (data['user'] != null) {
         final user = data['user'];

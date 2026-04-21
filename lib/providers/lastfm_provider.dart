@@ -1,9 +1,12 @@
+import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/services/lastfm_auth_service.dart';
 import '../data/repositories/lastfm_repository.dart';
 
 final lastfmAuthServiceProvider = Provider<LastfmAuthService>((ref) {
-  return LastfmAuthService();
+  final service = LastfmAuthService();
+  ref.onDispose(service.dispose);
+  return service;
 });
 
 final lastfmStateProvider =
@@ -52,9 +55,24 @@ class LastfmState {
 
 class LastfmStateNotifier extends StateNotifier<LastfmState> {
   final LastfmAuthService _service;
+  StreamSubscription<void>? _invalidSessionSub;
 
   LastfmStateNotifier(this._service) : super(LastfmState()) {
     _refreshState();
+    _invalidSessionSub = _service.invalidSessionStream.listen((_) {
+      // Service has already cleared credentials; reflect it in UI state and
+      // surface a hint so the user knows scrobbling stopped.
+      state = LastfmState(
+        isAuthenticated: false,
+        error: 'Last.fm session expired. Please reconnect your account.',
+      );
+    });
+  }
+
+  @override
+  void dispose() {
+    _invalidSessionSub?.cancel();
+    super.dispose();
   }
 
   void _refreshState() {

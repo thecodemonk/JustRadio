@@ -53,7 +53,9 @@ class _MobileShell extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final currentIndex = ref.watch(navigationIndexProvider);
-    final playerState = ref.watch(radioPlayerControllerProvider);
+    final currentStation = ref.watch(
+      radioPlayerControllerProvider.select((s) => s.currentStation),
+    );
 
     return Scaffold(
       extendBody: true,
@@ -61,7 +63,7 @@ class _MobileShell extends ConsumerWidget {
       body: Stack(
         children: [
           Positioned.fill(
-            child: AmbientBg(station: playerState.currentStation),
+            child: AmbientBg(station: currentStation),
           ),
           IndexedStack(
             index: currentIndex,
@@ -77,7 +79,7 @@ class _MobileShell extends ConsumerWidget {
       bottomNavigationBar: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (playerState.currentStation != null) const MiniPlayer(),
+          if (currentStation != null) const MiniPlayer(),
           ClipRect(
             child: BackdropFilter(
               filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),

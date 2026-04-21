@@ -9,7 +9,11 @@ import 'recent_plays_provider.dart';
 
 final audioPlayerServiceProvider = Provider<AudioPlayerService>((ref) {
   final service = AudioPlayerService();
-  ref.onDispose(() => service.dispose());
+  ref.onDispose(() {
+    // Fire-and-forget: Provider.onDispose is sync. The service awaits its
+    // own internal teardown (observers, streams, player); we just kick it off.
+    service.dispose();
+  });
   return service;
 });
 
@@ -113,20 +117,20 @@ class RadioPlayerController extends StateNotifier<RadioPlayerState> {
     });
   }
 
+  // Last.fm's scrobble policy requires "played for at least half the track or
+  // 4 minutes, whichever comes first, and longer than 30 seconds." For radio
+  // streams we don't know track length, so we use a 30s floor — matching the
+  // copy in the Last.fm settings screen.
+  static const _scrobbleMinSeconds = 30;
+
   void _handleTrackChange(NowPlaying current, NowPlaying previous) {
-    // Scrobble previous track if it played long enough
     if (previous.isNotEmpty && _trackStartTime != null) {
       final playDuration = DateTime.now().difference(_trackStartTime!);
-      if (playDuration.inSeconds >= 30) {
-        // Minimum duration for scrobble
-        final halfDuration = playDuration.inSeconds / 2;
-        if (halfDuration >= 30 || playDuration.inMinutes >= 4) {
-          _scrobbleTrack(previous, _trackStartTime!);
-        }
+      if (playDuration.inSeconds >= _scrobbleMinSeconds) {
+        _scrobbleTrack(previous, _trackStartTime!);
       }
     }
 
-    // Update now playing on Last.fm
     _trackStartTime = DateTime.now();
     _updateNowPlaying(current);
   }
@@ -195,7 +199,7 @@ class RadioPlayerController extends StateNotifier<RadioPlayerState> {
     final nowPlaying = state.nowPlaying;
     if (nowPlaying.isNotEmpty && _trackStartTime != null) {
       final playDuration = DateTime.now().difference(_trackStartTime!);
-      if (playDuration.inSeconds >= 30) {
+      if (playDuration.inSeconds >= _scrobbleMinSeconds) {
         _scrobbleTrack(nowPlaying, _trackStartTime!);
       }
     }

@@ -128,19 +128,6 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                   ),
                 ),
                 error: (error, stack) {
-                  if (error.toString().contains('Query changed')) {
-                    return const Center(
-                      child: SizedBox(
-                        width: 28,
-                        height: 28,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          valueColor:
-                              AlwaysStoppedAnimation(AppColors.accent),
-                        ),
-                      ),
-                    );
-                  }
                   return Center(
                     child: Padding(
                       padding: const EdgeInsets.all(24),

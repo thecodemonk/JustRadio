@@ -25,8 +25,9 @@ class DesktopShell extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final nav = ref.watch(desktopNavProvider);
-    final playerState = ref.watch(radioPlayerControllerProvider);
-    final station = playerState.currentStation;
+    final station = ref.watch(
+      radioPlayerControllerProvider.select((s) => s.currentStation),
+    );
     final showPlayerBar = station != null;
     final showRightPanel = station != null;
 
@@ -40,7 +41,7 @@ class DesktopShell extends ConsumerWidget {
               Expanded(
                 child: Row(
                   children: [
-                    const _Sidebar(),
+                    _Sidebar(bottomPadding: showPlayerBar ? 80 : 0),
                     Expanded(
                       child: _MainContent(
                         nav: nav,
@@ -71,7 +72,8 @@ class DesktopShell extends ConsumerWidget {
 }
 
 class _Sidebar extends ConsumerWidget {
-  const _Sidebar();
+  final double bottomPadding;
+  const _Sidebar({this.bottomPadding = 0});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -176,7 +178,7 @@ class _Sidebar extends ConsumerWidget {
             ),
           ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
+            padding: EdgeInsets.fromLTRB(12, 0, 12, 24 + bottomPadding),
             child: _NavItem(
               icon: Icons.settings_outlined,
               activeIcon: Icons.settings,

@@ -31,7 +31,23 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     super.initState();
     _listenStart = DateTime.now();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(radioPlayerControllerProvider.notifier).playStation(widget.station);
+      if (!mounted) return;
+      final playerState = ref.read(radioPlayerControllerProvider);
+      final current = playerState.currentStation;
+      if (current?.stationuuid != widget.station.stationuuid) {
+        ref
+            .read(radioPlayerControllerProvider.notifier)
+            .playStation(widget.station);
+      } else {
+        // Same station is already playing — sync loved state for whatever
+        // track is already on air, since our ref.listen only fires on
+        // subsequent changes.
+        final isAuthed = ref.read(lastfmStateProvider).isAuthenticated;
+        final np = playerState.nowPlaying;
+        if (isAuthed && np.artist.isNotEmpty && np.title.isNotEmpty) {
+          _syncLovedState(np.artist, np.title);
+        }
+      }
     });
   }
 
@@ -103,6 +119,15 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<RadioPlayerState>(radioPlayerControllerProvider, (prev, next) {
+      final isAuthed = ref.read(lastfmStateProvider).isAuthenticated;
+      final artist = next.nowPlaying.artist;
+      final title = next.nowPlaying.title;
+      if (isAuthed && artist.isNotEmpty && title.isNotEmpty) {
+        _syncLovedState(artist, title);
+      }
+    });
+
     final playerState = ref.watch(radioPlayerControllerProvider);
     final isFavorite = ref.watch(isFavoriteProvider(widget.station.stationuuid));
     final station = widget.station;
@@ -110,12 +135,6 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     final artist = playerState.nowPlaying.artist;
     final title = playerState.nowPlaying.title;
     final isAuthed = ref.watch(lastfmStateProvider).isAuthenticated;
-
-    if (artist.isNotEmpty && title.isNotEmpty && isAuthed) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _syncLovedState(artist, title);
-      });
-    }
 
     return Scaffold(
       backgroundColor: Colors.transparent,

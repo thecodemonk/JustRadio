@@ -7,7 +7,8 @@ JustRadio is a cross-platform streaming radio app built with Flutter. It allows 
 - **Framework**: Flutter (Dart)
 - **State Management**: Riverpod
 - **Audio Playback**: media_kit (uses mpv under the hood for better ICY metadata/streaming support)
-- **Local Storage**: Hive
+- **Local Storage**: Hive (favorites, recent plays, genre photo cache)
+- **Secure Storage**: flutter_secure_storage (Last.fm session key, username, Unsplash access key) — keyed via `SecureSecretsService`. Migrated out of Hive on first launch; requires the `keychain-access-groups` entitlement on macOS.
 - **HTTP Client**: Dio
 - **Window Management**: window_manager (desktop platforms)
 

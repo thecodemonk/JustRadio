@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'package:flutter/foundation.dart';
 import 'package:media_kit/media_kit.dart';
 import '../models/radio_station.dart';
 import '../models/now_playing.dart';
@@ -23,8 +24,11 @@ class AudioPlayerService {
 
   StreamSubscription? _playingSubscription;
   StreamSubscription? _errorSubscription;
+  StreamSubscription? _logSubscription;
   String _lastMetadata = '';
   bool _observingProperty = false;
+  static const _mediaTitleProp = 'media-title';
+  static const _icyTitleProp = 'metadata/by-key/icy-title';
 
   AudioPlayerService() : _player = Player() {
     _initListeners();
@@ -55,15 +59,18 @@ class AudioPlayerService {
 
     _errorSubscription = _player.stream.error.listen((error) {
       if (error.isNotEmpty) {
-        print('Player error: $error');
+        if (kDebugMode) {
+          debugPrint('Player error: $error');
+        }
         _playbackStateController.add(PlaybackState.error);
         _nowPlayingController.add(NowPlaying.empty());
       }
     });
 
-    // Listen for log messages from mpv
-    _player.stream.log.listen((log) {
-      print('mpv log [${log.level}]: ${log.prefix} - ${log.text}');
+    _logSubscription = _player.stream.log.listen((log) {
+      if (kDebugMode) {
+        debugPrint('mpv log [${log.level}]: ${log.prefix} - ${log.text}');
+      }
     });
   }
 
@@ -75,7 +82,7 @@ class AudioPlayerService {
       if (platform is NativePlayer) {
         // Observe the media-title property which mpv populates from ICY metadata
         await platform.observeProperty(
-          'media-title',
+          _mediaTitleProp,
           (String? value) async {
             if (value != null && value.isNotEmpty && value != _lastMetadata) {
               _lastMetadata = value;
@@ -87,7 +94,7 @@ class AudioPlayerService {
 
         // Also try observing the specific ICY title property
         await platform.observeProperty(
-          'metadata/by-key/icy-title',
+          _icyTitleProp,
           (String? value) async {
             if (value != null && value.isNotEmpty && value != _lastMetadata) {
               _lastMetadata = value;
@@ -97,8 +104,9 @@ class AudioPlayerService {
         );
       }
     } catch (e) {
-      // Property observation might not be available on all platforms
-      print('Could not setup metadata observer: $e');
+      if (kDebugMode) {
+        debugPrint('Could not setup metadata observer: $e');
+      }
     }
   }
 
@@ -121,11 +129,17 @@ class AudioPlayerService {
         },
       );
 
-      print('Playing stream: ${station.streamUrl}');
+      if (kDebugMode) {
+        debugPrint('Playing stream: ${station.streamUrl}');
+      }
       await _player.open(media, play: true);
-      print('Stream opened successfully');
+      if (kDebugMode) {
+        debugPrint('Stream opened successfully');
+      }
     } catch (e) {
-      print('Error playing stream: $e');
+      if (kDebugMode) {
+        debugPrint('Error playing stream: $e');
+      }
       _playbackStateController.add(PlaybackState.error);
       _nowPlayingController.add(NowPlaying.empty());
       rethrow;
@@ -185,13 +199,30 @@ class AudioPlayerService {
     await _player.setVolume(logarithmic * 100);
   }
 
-  void dispose() {
-    _playingSubscription?.cancel();
-    _errorSubscription?.cancel();
-    _nowPlayingController.close();
-    _stationController.close();
-    _playbackStateController.close();
-    _playingController.close();
-    _player.dispose();
+  Future<void> dispose() async {
+    // Unobserve mpv properties BEFORE disposing the player; NativePlayer
+    // throws an AssertionError if you call unobserveProperty after dispose.
+    if (_observingProperty) {
+      final platform = _player.platform;
+      if (platform is NativePlayer) {
+        for (final prop in const [_mediaTitleProp, _icyTitleProp]) {
+          try {
+            await platform.unobserveProperty(prop);
+          } catch (_) {
+            // Already gone or never successfully observed — safe to ignore.
+          }
+        }
+      }
+      _observingProperty = false;
+    }
+
+    await _playingSubscription?.cancel();
+    await _errorSubscription?.cancel();
+    await _logSubscription?.cancel();
+    await _nowPlayingController.close();
+    await _stationController.close();
+    await _playbackStateController.close();
+    await _playingController.close();
+    await _player.dispose();
   }
 }

@@ -142,66 +142,11 @@ class FavoritesScreen extends ConsumerWidget {
   }
 
   void _showAddCustomDialog(BuildContext context, WidgetRef ref) {
-    final nameController = TextEditingController();
-    final urlController = TextEditingController();
-
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Add Custom Stream'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(
-                labelText: 'Name',
-                hintText: 'My Station',
-              ),
-              autofocus: true,
-              textInputAction: TextInputAction.next,
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: urlController,
-              decoration: const InputDecoration(
-                labelText: 'Stream URL',
-                hintText: 'https://example.com/stream',
-              ),
-              keyboardType: TextInputType.url,
-              textInputAction: TextInputAction.done,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(
-              backgroundColor: AppColors.accent,
-              foregroundColor: const Color(0xFF0A0A0A),
-            ),
-            onPressed: () {
-              final name = nameController.text.trim();
-              final url = urlController.text.trim();
-              if (name.isEmpty || url.isEmpty) {
-                Navigator.pop(context);
-                return;
-              }
-              final station = RadioStation(
-                stationuuid:
-                    'custom-${DateTime.now().millisecondsSinceEpoch}',
-                name: name,
-                url: url,
-              );
-              ref.read(favoritesProvider.notifier).add(station);
-              Navigator.pop(context);
-            },
-            child: const Text('Add'),
-          ),
-        ],
+      builder: (context) => _AddCustomStreamDialog(
+        onSubmit: (station) =>
+            ref.read(favoritesProvider.notifier).add(station),
       ),
     );
   }
@@ -232,6 +177,104 @@ class FavoritesScreen extends ConsumerWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _AddCustomStreamDialog extends StatefulWidget {
+  final void Function(RadioStation) onSubmit;
+  const _AddCustomStreamDialog({required this.onSubmit});
+
+  @override
+  State<_AddCustomStreamDialog> createState() => _AddCustomStreamDialogState();
+}
+
+class _AddCustomStreamDialogState extends State<_AddCustomStreamDialog> {
+  final _nameController = TextEditingController();
+  final _urlController = TextEditingController();
+  String? _urlError;
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _urlController.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final name = _nameController.text.trim();
+    final url = _urlController.text.trim();
+    if (name.isEmpty || url.isEmpty) {
+      Navigator.pop(context);
+      return;
+    }
+
+    final parsed = Uri.tryParse(url);
+    final isValid = parsed != null &&
+        parsed.hasScheme &&
+        (parsed.isScheme('http') || parsed.isScheme('https')) &&
+        parsed.host.isNotEmpty;
+    if (!isValid) {
+      setState(() => _urlError = 'Enter a valid http:// or https:// URL');
+      return;
+    }
+
+    final station = RadioStation(
+      stationuuid: 'custom-${DateTime.now().millisecondsSinceEpoch}',
+      name: name,
+      url: url,
+    );
+    widget.onSubmit(station);
+    Navigator.pop(context);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Add Custom Stream'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _nameController,
+            decoration: const InputDecoration(
+              labelText: 'Name',
+              hintText: 'My Station',
+            ),
+            autofocus: true,
+            textInputAction: TextInputAction.next,
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _urlController,
+            decoration: InputDecoration(
+              labelText: 'Stream URL',
+              hintText: 'https://example.com/stream',
+              errorText: _urlError,
+            ),
+            keyboardType: TextInputType.url,
+            textInputAction: TextInputAction.done,
+            onChanged: (_) {
+              if (_urlError != null) setState(() => _urlError = null);
+            },
+            onSubmitted: (_) => _submit(),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          style: FilledButton.styleFrom(
+            backgroundColor: AppColors.accent,
+            foregroundColor: const Color(0xFF0A0A0A),
+          ),
+          onPressed: _submit,
+          child: const Text('Add'),
+        ),
+      ],
     );
   }
 }

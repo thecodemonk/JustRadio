@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/models/radio_station.dart';
 import '../../data/repositories/radio_browser_repository.dart';
@@ -5,21 +6,29 @@ import '../../providers/audio_player_provider.dart';
 
 final searchQueryProvider = StateProvider<String>((ref) => '');
 
+/// Cancellable debounce. The autodispose provider is torn down and rebuilt
+/// whenever the query changes; if that happens while we're waiting, the
+/// timer is cancelled and the completer resolves to `false` — the caller
+/// returns early and no HTTP call is made.
+Future<bool> _debounce(Ref ref, Duration delay) {
+  final completer = Completer<bool>();
+  final timer = Timer(delay, () {
+    if (!completer.isCompleted) completer.complete(true);
+  });
+  ref.onDispose(() {
+    timer.cancel();
+    if (!completer.isCompleted) completer.complete(false);
+  });
+  return completer.future;
+}
+
 final searchResultsProvider =
     FutureProvider.autoDispose<List<RadioStation>>((ref) async {
   final query = ref.watch(searchQueryProvider);
+  if (query.isEmpty) return [];
 
-  if (query.isEmpty) {
-    return [];
-  }
-
-  // Debounce
-  await Future.delayed(const Duration(milliseconds: 300));
-
-  // Check if query has changed during debounce
-  if (ref.read(searchQueryProvider) != query) {
-    throw Exception('Query changed');
-  }
+  final shouldProceed = await _debounce(ref, const Duration(milliseconds: 300));
+  if (!shouldProceed) return const [];
 
   final repository = ref.read(radioBrowserRepositoryProvider);
   return repository.searchStations(name: query);
@@ -65,10 +74,9 @@ final filteredSearchResultsProvider =
     case SearchFilter.name:
       final query = ref.watch(searchQueryProvider);
       if (query.isEmpty) return [];
-      await Future.delayed(const Duration(milliseconds: 300));
-      if (ref.read(searchQueryProvider) != query) {
-        throw Exception('Query changed');
-      }
+      final shouldProceed =
+          await _debounce(ref, const Duration(milliseconds: 300));
+      if (!shouldProceed) return const [];
       return repository.searchStations(name: query);
 
     case SearchFilter.country:
