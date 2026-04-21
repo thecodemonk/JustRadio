@@ -1,5 +1,8 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/theme/app_theme.dart';
+import '../../core/widgets/station_art.dart';
 import '../../providers/audio_player_provider.dart';
 import 'player_screen.dart';
 
@@ -10,130 +13,141 @@ class MiniPlayer extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final playerState = ref.watch(radioPlayerControllerProvider);
     final station = playerState.currentStation;
+    if (station == null) return const SizedBox.shrink();
 
-    if (station == null) {
-      return const SizedBox.shrink();
-    }
+    final np = playerState.nowPlaying;
+    final subtitle = np.isNotEmpty ? np.displayText : station.name;
 
-    final colorScheme = Theme.of(context).colorScheme;
-
-    return GestureDetector(
-      onTap: () {
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (context) => PlayerScreen(station: station),
+    return ClipRect(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.55),
+            border: Border(
+              top: BorderSide(color: AppColors.border(0.08)),
+            ),
           ),
-        );
-      },
-      child: Container(
-        height: 64,
-        decoration: BoxDecoration(
-          color: colorScheme.surfaceContainerHighest,
-          boxShadow: [
-            BoxShadow(
-              color: colorScheme.shadow.withAlpha(26),
-              blurRadius: 8,
-              offset: const Offset(0, -2),
-            ),
-          ],
-        ),
-        child: Row(
-          children: [
-            // Artwork
-            _buildMiniArtwork(context, station.favicon),
-
-            // Station info
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      station.name,
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+          child: InkWell(
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (context) => PlayerScreen(station: station),
+                ),
+              );
+            },
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 12, vertical: 10),
+              child: Row(
+                children: [
+                  StationArt(station: station, size: 44, radius: 4),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          np.isNotEmpty ? np.title : station.name,
+                          style: AppTypography.body(13,
+                              color: AppColors.onBgStrong,
+                              weight: FontWeight.w500),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          np.isNotEmpty
+                              ? '${np.artist} · ${station.name}'
+                              : subtitle,
+                          style: AppTypography.body(11,
+                              color: AppColors.onBgMuted(0.55)),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
                     ),
-                    if (playerState.nowPlaying.isNotEmpty)
-                      Text(
-                        playerState.nowPlaying.displayText,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: colorScheme.onSurfaceVariant,
-                            ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                  ),
+                  if (playerState.isLoading)
+                    const Padding(
+                      padding: EdgeInsets.all(10),
+                      child: SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor:
+                                AlwaysStoppedAnimation(AppColors.accent)),
                       ),
-                  ],
-                ),
+                    )
+                  else
+                    _MiniButton(
+                      icon: playerState.isPlaying
+                          ? Icons.pause_rounded
+                          : Icons.play_arrow_rounded,
+                      onTap: () => ref
+                          .read(radioPlayerControllerProvider.notifier)
+                          .togglePlayPause(),
+                      primary: true,
+                    ),
+                  const SizedBox(width: 4),
+                  _MiniButton(
+                    icon: Icons.close,
+                    onTap: () => ref
+                        .read(radioPlayerControllerProvider.notifier)
+                        .stop(),
+                  ),
+                ],
               ),
             ),
-
-            // Controls
-            if (playerState.isLoading)
-              const Padding(
-                padding: EdgeInsets.all(12),
-                child: SizedBox(
-                  width: 24,
-                  height: 24,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-              )
-            else
-              IconButton(
-                icon: Icon(
-                  playerState.isPlaying ? Icons.pause : Icons.play_arrow,
-                ),
-                onPressed: () {
-                  ref
-                      .read(radioPlayerControllerProvider.notifier)
-                      .togglePlayPause();
-                },
-              ),
-
-            IconButton(
-              icon: const Icon(Icons.close),
-              onPressed: () {
-                ref.read(radioPlayerControllerProvider.notifier).stop();
-              },
-            ),
-          ],
+          ),
         ),
       ),
     );
   }
+}
 
-  Widget _buildMiniArtwork(BuildContext context, String favicon) {
-    if (favicon.isEmpty) {
-      return Container(
-        width: 64,
-        height: 64,
-        color: Theme.of(context).colorScheme.primaryContainer,
-        child: Icon(
-          Icons.radio,
-          color: Theme.of(context).colorScheme.onPrimaryContainer,
+class _MiniButton extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback onTap;
+  final bool primary;
+  const _MiniButton(
+      {required this.icon, required this.onTap, this.primary = false});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      shape: const CircleBorder(),
+      child: InkWell(
+        onTap: onTap,
+        customBorder: const CircleBorder(),
+        child: Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: primary
+                ? Colors.white
+                : AppColors.surface(0.06),
+            boxShadow: primary
+                ? [
+                    BoxShadow(
+                      color: AppColors.accentGlow(0.35),
+                      blurRadius: 16,
+                    )
+                  ]
+                : null,
+          ),
+          child: Icon(
+            icon,
+            size: 18,
+            color: primary
+                ? const Color(0xFF0A0A0A)
+                : AppColors.onBgMuted(0.75),
+          ),
         ),
-      );
-    }
-
-    return SizedBox(
-      width: 64,
-      height: 64,
-      child: Image.network(
-        favicon,
-        fit: BoxFit.cover,
-        errorBuilder: (context, error, stackTrace) {
-          return Container(
-            color: Theme.of(context).colorScheme.primaryContainer,
-            child: Icon(
-              Icons.radio,
-              color: Theme.of(context).colorScheme.onPrimaryContainer,
-            ),
-          );
-        },
       ),
     );
   }

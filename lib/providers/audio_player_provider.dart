@@ -5,6 +5,7 @@ import '../data/models/now_playing.dart';
 import '../data/services/audio_player_service.dart';
 import '../data/repositories/radio_browser_repository.dart';
 import 'lastfm_provider.dart';
+import 'recent_plays_provider.dart';
 
 final audioPlayerServiceProvider = Provider<AudioPlayerService>((ref) {
   final service = AudioPlayerService();
@@ -170,6 +171,9 @@ class RadioPlayerController extends StateNotifier<RadioPlayerState> {
 
       await _playerService.playStation(station);
       _trackStartTime = DateTime.now();
+
+      // Record in recently played history
+      _ref.read(recentPlaysProvider.notifier).record(station);
     } catch (e) {
       state = state.copyWith(
         isLoading: false,

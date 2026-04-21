@@ -19,9 +19,10 @@ JustRadio is a cross-platform streaming radio app built with Flutter. It allows 
 - Volume control uses a **logarithmic curve** (`log(1 + linear * 9) / log(10)`) for perceptually linear volume - this compensates for human hearing perception
 
 ### Desktop Window
-- Minimum window size: 400x700
-- Default window size: 450x800
+- Minimum window size: 1000x700 (above the 960 desktop breakpoint, so desktop shell always renders on desktop platforms)
+- Default window size: 1280x820 (matches design spec)
 - Configured via `window_manager` in `main.dart` for cross-platform support
+- Compact/portrait layout is phone-only; desktop always gets the sidebar shell
 
 ### State Management
 - Uses Riverpod providers throughout

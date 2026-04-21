@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/theme/app_theme.dart';
 import '../../data/models/radio_station.dart';
 import '../../providers/favorites_provider.dart';
 import '../search/widgets/station_list_tile.dart';
@@ -13,23 +14,54 @@ class FavoritesScreen extends ConsumerWidget {
     final favorites = ref.watch(favoritesProvider);
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Favorites'),
-        actions: [
-          if (favorites.isNotEmpty)
-            IconButton(
-              icon: const Icon(Icons.delete_outline),
-              onPressed: () => _showClearDialog(context, ref),
+      backgroundColor: Colors.transparent,
+      body: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          favorites.isEmpty
+                              ? 'NO STATIONS YET'
+                              : '${favorites.length} STATION${favorites.length == 1 ? '' : 'S'}',
+                          style: AppTypography.label(10, letterSpacing: 2),
+                        ),
+                        const SizedBox(height: 6),
+                        Text('Your favorites',
+                            style: AppTypography.display(38)),
+                      ],
+                    ),
+                  ),
+                  if (favorites.isNotEmpty)
+                    IconButton(
+                      tooltip: 'Clear all',
+                      icon: Icon(Icons.delete_outline,
+                          color: AppColors.onBgMuted(0.6)),
+                      onPressed: () => _showClearDialog(context, ref),
+                    ),
+                ],
+              ),
             ),
-        ],
+            Expanded(
+              child: favorites.isEmpty
+                  ? _buildEmptyState(context)
+                  : _buildFavoritesList(context, ref, favorites),
+            ),
+          ],
+        ),
       ),
-      body: favorites.isEmpty
-          ? _buildEmptyState(context)
-          : _buildFavoritesList(context, ref, favorites),
-      floatingActionButton: FloatingActionButton(
+      floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _showAddCustomDialog(context, ref),
-        tooltip: 'Add custom stream',
-        child: const Icon(Icons.add),
+        icon: const Icon(Icons.add),
+        label: const Text('Add stream'),
       ),
     );
   }
@@ -41,20 +73,15 @@ class FavoritesScreen extends ConsumerWidget {
         children: [
           Icon(
             Icons.favorite_border,
-            size: 64,
-            color: Theme.of(context).colorScheme.primary.withAlpha(128),
+            size: 56,
+            color: AppColors.accentGlow(0.5),
           ),
-          const SizedBox(height: 16),
-          Text(
-            'No favorites yet',
-            style: Theme.of(context).textTheme.titleLarge,
-          ),
+          const SizedBox(height: 14),
+          Text('Nothing pinned yet', style: AppTypography.display(24)),
           const SizedBox(height: 8),
           Text(
-            'Add stations to your favorites\nby tapping the heart icon',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
+            'Tap the heart on a station\nto save it here.',
+            style: AppTypography.body(13, color: AppColors.onBgMuted(0.55)),
             textAlign: TextAlign.center,
           ),
         ],
@@ -65,10 +92,10 @@ class FavoritesScreen extends ConsumerWidget {
   Widget _buildFavoritesList(
     BuildContext context,
     WidgetRef ref,
-    List favorites,
+    List<RadioStation> favorites,
   ) {
     return ListView.builder(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 140),
       itemCount: favorites.length,
       itemBuilder: (context, index) {
         final station = favorites[index];
@@ -77,12 +104,13 @@ class FavoritesScreen extends ConsumerWidget {
           direction: DismissDirection.endToStart,
           background: Container(
             alignment: Alignment.centerRight,
-            padding: const EdgeInsets.only(right: 16),
-            color: Theme.of(context).colorScheme.error,
-            child: Icon(
-              Icons.delete,
-              color: Theme.of(context).colorScheme.onError,
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            margin: const EdgeInsets.symmetric(horizontal: 4),
+            decoration: BoxDecoration(
+              color: AppColors.live.withValues(alpha: 0.2),
+              borderRadius: BorderRadius.circular(10),
             ),
+            child: Icon(Icons.delete, color: AppColors.live),
           ),
           onDismissed: (direction) {
             ref.read(favoritesProvider.notifier).remove(station.stationuuid);
@@ -91,9 +119,9 @@ class FavoritesScreen extends ConsumerWidget {
                 content: Text('${station.name} removed from favorites'),
                 action: SnackBarAction(
                   label: 'Undo',
-                  onPressed: () {
-                    ref.read(favoritesProvider.notifier).add(station);
-                  },
+                  textColor: AppColors.accent,
+                  onPressed: () =>
+                      ref.read(favoritesProvider.notifier).add(station),
                 ),
               ),
             );
@@ -150,7 +178,11 @@ class FavoritesScreen extends ConsumerWidget {
             onPressed: () => Navigator.pop(context),
             child: const Text('Cancel'),
           ),
-          TextButton(
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: AppColors.accent,
+              foregroundColor: const Color(0xFF0A0A0A),
+            ),
             onPressed: () {
               final name = nameController.text.trim();
               final url = urlController.text.trim();
@@ -187,7 +219,11 @@ class FavoritesScreen extends ConsumerWidget {
             onPressed: () => Navigator.pop(context),
             child: const Text('Cancel'),
           ),
-          TextButton(
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: AppColors.live,
+              foregroundColor: Colors.white,
+            ),
             onPressed: () {
               ref.read(favoritesProvider.notifier).clear();
               Navigator.pop(context);
