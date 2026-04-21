@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../data/models/radio_station.dart';
 import '../../providers/favorites_provider.dart';
 import '../search/widgets/station_list_tile.dart';
 import '../player/player_screen.dart';
@@ -25,6 +26,11 @@ class FavoritesScreen extends ConsumerWidget {
       body: favorites.isEmpty
           ? _buildEmptyState(context)
           : _buildFavoritesList(context, ref, favorites),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => _showAddCustomDialog(context, ref),
+        tooltip: 'Add custom stream',
+        child: const Icon(Icons.add),
+      ),
     );
   }
 
@@ -104,6 +110,67 @@ class FavoritesScreen extends ConsumerWidget {
           ),
         );
       },
+    );
+  }
+
+  void _showAddCustomDialog(BuildContext context, WidgetRef ref) {
+    final nameController = TextEditingController();
+    final urlController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Add Custom Stream'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameController,
+              decoration: const InputDecoration(
+                labelText: 'Name',
+                hintText: 'My Station',
+              ),
+              autofocus: true,
+              textInputAction: TextInputAction.next,
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: urlController,
+              decoration: const InputDecoration(
+                labelText: 'Stream URL',
+                hintText: 'https://example.com/stream',
+              ),
+              keyboardType: TextInputType.url,
+              textInputAction: TextInputAction.done,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              final name = nameController.text.trim();
+              final url = urlController.text.trim();
+              if (name.isEmpty || url.isEmpty) {
+                Navigator.pop(context);
+                return;
+              }
+              final station = RadioStation(
+                stationuuid:
+                    'custom-${DateTime.now().millisecondsSinceEpoch}',
+                name: name,
+                url: url,
+              );
+              ref.read(favoritesProvider.notifier).add(station);
+              Navigator.pop(context);
+            },
+            child: const Text('Add'),
+          ),
+        ],
+      ),
     );
   }
 

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/models/radio_station.dart';
 import '../../providers/audio_player_provider.dart';
 import '../../providers/favorites_provider.dart';
+import '../../providers/lastfm_provider.dart';
 
 class PlayerScreen extends ConsumerStatefulWidget {
   final RadioStation station;
@@ -17,6 +18,10 @@ class PlayerScreen extends ConsumerStatefulWidget {
 }
 
 class _PlayerScreenState extends ConsumerState<PlayerScreen> {
+  String? _lovedTrackKey;
+  bool _isLoved = false;
+  bool _isLoveBusy = false;
+
   @override
   void initState() {
     super.initState();
@@ -24,6 +29,70 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(radioPlayerControllerProvider.notifier).playStation(widget.station);
     });
+  }
+
+  String _trackKey(String artist, String title) => '$artist|$title';
+
+  Future<void> _syncLovedState(String artist, String title) async {
+    final key = _trackKey(artist, title);
+    if (_lovedTrackKey == key) return;
+
+    final lastfmService = ref.read(lastfmAuthServiceProvider);
+    final username = ref.read(lastfmStateProvider).username;
+    if (!lastfmService.isAuthenticated || username == null) {
+      setState(() {
+        _lovedTrackKey = key;
+        _isLoved = false;
+      });
+      return;
+    }
+
+    setState(() {
+      _lovedTrackKey = key;
+      _isLoved = false;
+    });
+
+    final loved = await lastfmService.repository.isTrackLoved(
+      artist: artist,
+      track: title,
+      username: username,
+    );
+    if (!mounted || _lovedTrackKey != key) return;
+    setState(() => _isLoved = loved);
+  }
+
+  Future<void> _toggleLove(String artist, String title) async {
+    if (_isLoveBusy) return;
+    final lastfmService = ref.read(lastfmAuthServiceProvider);
+    if (!lastfmService.isAuthenticated) return;
+
+    final wantLoved = !_isLoved;
+    setState(() {
+      _isLoveBusy = true;
+      _isLoved = wantLoved;
+    });
+
+    final success = wantLoved
+        ? await lastfmService.repository.loveTrack(artist: artist, track: title)
+        : await lastfmService.repository.unloveTrack(artist: artist, track: title);
+
+    if (!mounted) return;
+    setState(() {
+      _isLoveBusy = false;
+      if (!success) _isLoved = !wantLoved;
+    });
+
+    if (!success) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            wantLoved
+                ? 'Failed to love track on Last.fm'
+                : 'Failed to unlove track on Last.fm',
+          ),
+        ),
+      );
+    }
   }
 
   @override
@@ -189,23 +258,57 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       );
     }
 
+    final artist = state.nowPlaying.artist;
+    final title = state.nowPlaying.title;
+    final isAuthed = ref.watch(lastfmStateProvider).isAuthenticated;
+
+    if (artist.isNotEmpty && title.isNotEmpty && isAuthed) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _syncLovedState(artist, title);
+      });
+    }
+
     return Column(
       children: [
-        if (state.nowPlaying.artist.isNotEmpty)
+        if (artist.isNotEmpty)
           Text(
-            state.nowPlaying.artist,
+            artist,
             style: Theme.of(context).textTheme.titleMedium?.copyWith(
                   color: Theme.of(context).colorScheme.primary,
                 ),
             textAlign: TextAlign.center,
           ),
-        if (state.nowPlaying.title.isNotEmpty)
-          Text(
-            state.nowPlaying.title,
-            style: Theme.of(context).textTheme.bodyLarge,
-            textAlign: TextAlign.center,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
+        if (title.isNotEmpty)
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Flexible(
+                child: Text(
+                  title,
+                  style: Theme.of(context).textTheme.bodyLarge,
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              if (isAuthed && artist.isNotEmpty) ...[
+                const SizedBox(width: 8),
+                IconButton(
+                  iconSize: 20,
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                  tooltip: _isLoved ? 'Unlove on Last.fm' : 'Love on Last.fm',
+                  onPressed: _isLoveBusy ? null : () => _toggleLove(artist, title),
+                  icon: Icon(
+                    _isLoved ? Icons.favorite : Icons.favorite_border,
+                    color: _isLoved
+                        ? Theme.of(context).colorScheme.primary
+                        : Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ],
           ),
       ],
     );

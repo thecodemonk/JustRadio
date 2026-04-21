@@ -158,6 +158,77 @@ class LastfmRepository {
     }
   }
 
+  /// Love a track on Last.fm
+  Future<bool> loveTrack({
+    required String artist,
+    required String track,
+  }) =>
+      _loveOrUnlove('track.love', artist: artist, track: track);
+
+  /// Unlove a track on Last.fm
+  Future<bool> unloveTrack({
+    required String artist,
+    required String track,
+  }) =>
+      _loveOrUnlove('track.unlove', artist: artist, track: track);
+
+  Future<bool> _loveOrUnlove(
+    String method, {
+    required String artist,
+    required String track,
+  }) async {
+    if (!isAuthenticated) return false;
+
+    final params = {
+      'method': method,
+      'api_key': apiKey,
+      'sk': _sessionKey!,
+      'artist': artist,
+      'track': track,
+    };
+
+    final signature = Md5Helper.generateLastfmSignature(params, apiSecret);
+    params['api_sig'] = signature;
+    params['format'] = 'json';
+
+    try {
+      final response = await _dio.post(
+        '',
+        data: params,
+        options: Options(
+          contentType: Headers.formUrlEncodedContentType,
+        ),
+      );
+      return response.statusCode == 200 && response.data['error'] == null;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /// Check whether the authenticated user has loved this track.
+  Future<bool> isTrackLoved({
+    required String artist,
+    required String track,
+    required String username,
+  }) async {
+    final params = {
+      'method': 'track.getInfo',
+      'api_key': apiKey,
+      'artist': artist,
+      'track': track,
+      'username': username,
+      'format': 'json',
+    };
+
+    try {
+      final response = await _dio.get('', queryParameters: params);
+      final loved = response.data?['track']?['userloved'];
+      return loved?.toString() == '1';
+    } catch (e) {
+      return false;
+    }
+  }
+
   /// Get user info
   Future<UserInfo?> getUserInfo() async {
     if (!isAuthenticated) return null;
