@@ -46,3 +46,6 @@ app.*.map.json
 
 # API Keys - DO NOT COMMIT
 lib/core/constants/lastfm_config.dart
+
+# macOS signing credentials - DO NOT COMMIT (team ID is private)
+macos/Runner/Configs/LocalSigning.xcconfig

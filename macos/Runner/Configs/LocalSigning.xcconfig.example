@@ -1,0 +1,25 @@
+// macOS signing credentials — LOCAL ONLY.
+//
+// Copy this file to `LocalSigning.xcconfig` (in the same directory) and fill
+// in DEVELOPMENT_TEAM with your Apple Developer team ID. The real file is
+// gitignored so your team ID never lands in git history.
+//
+// Find your team ID:
+//   - Apple Developer portal → Membership → Team ID, OR
+//   - From the cert's Organizational Unit (OU) field:
+//       security find-certificate -c "<your-apple-id-email>" -p \
+//         | openssl x509 -subject -noout
+//     Look for `OU=XXXXXXXXXX` — that's the Team ID.
+//
+// IMPORTANT: do NOT use the 10-char code shown in parens in the cert's
+// common name (e.g. `Apple Development: name (ABC123DEF4)`). That's a
+// per-certificate unique identifier, NOT your Team ID — they happen to
+// share the same 10-char format, which is a notorious Apple footgun.
+//
+// Debug.xcconfig + Release.xcconfig include this file optionally (#include?),
+// so if LocalSigning.xcconfig is missing, the build still compiles — it just
+// can't sign for macOS. iOS simulator / Android builds are unaffected.
+
+DEVELOPMENT_TEAM = XXXXXXXXXX
+CODE_SIGN_STYLE = Automatic
+CODE_SIGN_IDENTITY = Apple Development

@@ -28,5 +28,17 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<!-- Allow HTTP for any host. Radio Browser lists thousands of
+	     stations served over plain HTTP (BBC, many smaller stations),
+	     and user-added URLs can be anything. iOS already has this.
+	     APPLE GOTCHA: NSAllowsArbitraryLoads is IGNORED if any of
+	     NSAllowsLocalNetworking / NSAllowsArbitraryLoadsInMedia /
+	     NSAllowsArbitraryLoadsInWebContent are also set — the narrower
+	     keys cancel the broader one. Keep this as the only ATS key. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
 </dict>
 </plist>

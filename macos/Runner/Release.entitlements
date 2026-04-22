@@ -6,6 +6,11 @@
 	<true/>
 	<key>com.apple.security.network.client</key>
 	<true/>
+	<!-- Required for IcyLocalHttpProxy to bind NWListener on 127.0.0.1.
+	     Already present in DebugProfile.entitlements — adding here so
+	     release builds don't silently fail on the listener bind. -->
+	<key>com.apple.security.network.server</key>
+	<true/>
 	<key>com.apple.security.device.audio-input</key>
 	<true/>
 	<key>keychain-access-groups</key>
