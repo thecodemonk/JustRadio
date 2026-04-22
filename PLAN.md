@@ -78,3 +78,48 @@ Phase 1 (native audio bridge on iOS + Android with unified ICY and HLS metadata)
 - `ios/Runner/AudioPlayerPlugin.swift` — poll restart
 
 **Estimate:** half a day for the periodic approach, ~2 days for the resource-loader rewrite.
+
+## Phase 5 — Album art retrieval and display
+
+**Goal:** once we have `(artist, title)` for the currently playing track, fetch album art and show it in place of / alongside the station logo on the player screen, the mini-player, and CarPlay / Android Auto now-playing surfaces.
+
+**Investigation first** — the right source isn't obvious; start by picking one:
+
+- **Last.fm `track.getInfo`** — already authenticated (we have an API key + session key for scrobbling). Returns `track.album.image` in small/medium/large/extralarge/mega sizes. Free, no extra auth. Preferred — we're already Last.fm-flavored.
+- **iTunes Search API** (`itunes.apple.com/search?term=...`) — no auth, no rate-limit in practice, very high hit rate. Good fallback.
+- **MusicBrainz + Cover Art Archive** — free but slow, rate-limited to 1 req/sec, stricter user-agent requirement.
+- **Deezer Public API** — no auth, good catalog, permissive CORS.
+
+Last.fm first, iTunes as a fallback when Last.fm returns no image (common for obscure tracks).
+
+**Scope:**
+
+1. New `AlbumArtService` in `lib/data/services/` with `Future<AlbumArt?> lookup(artist, title)`. Tries Last.fm, falls back to iTunes, returns the largest available image URL + a credit string.
+2. New Hive-backed `AlbumArtRepository` mirroring the existing `genre_photos_repository.dart` pattern. Cache by `(artist, title)` → `AlbumArt`. TTL: practically forever — tracks don't change art often, and we want offline robustness. Invalidate only on user-triggered refresh.
+3. Riverpod provider `albumArtProvider.family((artist, title))` returning `AsyncValue<AlbumArt?>`. Uses repo-first, service-on-miss pattern (same shape as `genrePhotoProvider`).
+4. Wire into `RadioPlayerController` — whenever a new `NowPlaying` arrives with non-empty artist + title, trigger the lookup; store the resulting URL on the state.
+5. UI surfaces:
+   - `player_screen.dart` — swap `StationArt` for album art when available, fade in; show station logo as the fallback.
+   - `mini_player.dart` — same, smaller.
+   - iOS `MPNowPlayingInfoCenter` (part of Phase 3 groundwork) reads `state.albumArtUrl` and downloads + sets `MPMediaItemPropertyArtwork`.
+   - Android MediaSession metadata (`ART_URI` from Phase 2) gets populated from the same source — Android Auto picks it up automatically.
+6. Throttle to avoid hammering Last.fm: only one in-flight lookup per `(artist, title)` key; debounce 500ms after a metadata change to coalesce rapid updates.
+
+**Edge cases worth thinking about:**
+- Station IDs (e.g., `SomaFM: Groove Salad` from the TRSN frame) arriving as artist — filter these out before lookup.
+- Radio shows / DJ sets where "artist - title" doesn't map to a real track. Service should degrade silently; UI falls back to station logo.
+- Copyright / attribution — Last.fm requires linking back to their page for images; iTunes requires the badge. Add a small credits section to the existing settings screen.
+- HLS streams already give us `WXXX` URLs that point to the station's logo — **not** album art, but a second fallback for stations we can't look up.
+
+**Files touched (new + modified):**
+- `lib/data/services/album_art_service.dart` — new
+- `lib/data/repositories/album_art_repository.dart` — new
+- `lib/data/models/album_art.dart` — new
+- `lib/providers/album_art_provider.dart` — new (or fold into an existing provider file)
+- `lib/providers/audio_player_provider.dart` — trigger lookup on track change
+- `lib/features/player/player_screen.dart` — render album art over station art
+- `lib/features/player/mini_player.dart` — same
+- `ios/Runner/AudioPlayerPlugin.swift` — `MPNowPlayingInfoCenter` artwork (ties into Phase 3)
+- `android/...MediaBrowserService.kt` — `METADATA_KEY_ART_URI` (ties into Phase 2)
+
+**Estimate:** 1 day for Last.fm-only with caching + UI. Add half a day for iTunes fallback and one more half-day for the Now-Playing-Center integrations.
