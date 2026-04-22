@@ -42,3 +42,13 @@ android {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // ExoPlayer (media3) — native audio engine used by AudioPlayerPlugin.kt.
+    // Handles ICY StreamTitle + HLS ID3 timed metadata via Player.Listener.onMetadata.
+    // 1.10.0 specifically added "Expose ID3 (EMSG) metadata track in audio
+    // renditions" for HLS, which earlier versions missed for FLAC-in-fMP4
+    // audio-only HLS renditions (e.g. SomaFM FLAC).
+    implementation("androidx.media3:media3-exoplayer:1.10.0")
+    implementation("androidx.media3:media3-exoplayer-hls:1.10.0")
+}

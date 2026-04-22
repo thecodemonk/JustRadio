@@ -1,20 +1,35 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/models/radio_station.dart';
 import '../data/models/now_playing.dart';
 import '../data/services/audio_player_service.dart';
+import '../data/services/mpv_audio_player_service.dart';
+import '../data/services/native_mobile_audio_player_service.dart';
 import '../data/repositories/radio_browser_repository.dart';
 import 'lastfm_provider.dart';
 import 'recent_plays_provider.dart';
 
 final audioPlayerServiceProvider = Provider<AudioPlayerService>((ref) {
-  final service = AudioPlayerService();
+  // Mobile uses a native AVPlayer/ExoPlayer bridge — handles ICY StreamTitle
+  // AND HLS ID3 timed metadata, and is the same native surface we'll extend
+  // for MPNowPlayingInfoCenter/CarPlay (iOS) and MediaSession/Android Auto.
+  // Desktop stays on media_kit/mpv.
+  final onMobile = Platform.isAndroid || Platform.isIOS;
+  final AudioPlayerService service =
+      onMobile ? NativeMobileAudioPlayerService() : MpvAudioPlayerService();
+
   ref.onDispose(() {
     // Fire-and-forget: Provider.onDispose is sync. The service awaits its
     // own internal teardown (observers, streams, player); we just kick it off.
     service.dispose();
   });
   return service;
+});
+
+final icyDebugStreamProvider = StreamProvider<IcyDebugInfo>((ref) {
+  final service = ref.watch(audioPlayerServiceProvider);
+  return service.icyDebugStream;
 });
 
 final currentStationProvider = StreamProvider<RadioStation?>((ref) {

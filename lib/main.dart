@@ -37,8 +37,12 @@ Future<void> main() async {
   Hive.registerAdapter(RecentPlayAdapter());
   Hive.registerAdapter(GenrePhotoAdapter());
 
-  // Initialize audio service
-  await AudioPlayerService.init();
+  // Initialize audio service — media_kit on desktop only. On mobile we use
+  // the native AVPlayer/ExoPlayer bridge and skipping this avoids a noisy
+  // PathNotFoundException from media_kit's NativeReferenceHolder on Android.
+  if (!Platform.isAndroid && !Platform.isIOS) {
+    await AudioPlayerService.init();
+  }
 
   // Create container and initialize services
   final container = ProviderContainer();

@@ -44,4 +44,5 @@ class AppSettingsRepository {
       _unsplashAccessKey = trimmed;
     }
   }
+
 }

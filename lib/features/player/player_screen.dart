@@ -10,6 +10,7 @@ import '../../providers/audio_player_provider.dart';
 import '../../providers/favorites_provider.dart';
 import '../../providers/lastfm_provider.dart';
 import '../../providers/sleep_timer_provider.dart';
+import 'widgets/icy_debug_overlay.dart';
 
 class PlayerScreen extends ConsumerStatefulWidget {
   final RadioStation station;
@@ -223,6 +224,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
                   ),
                   const SizedBox(height: 28),
                   const _VolumeControl(),
+                  const IcyDebugOverlay(),
                 ],
               ),
             ),
@@ -427,7 +429,7 @@ class _TrackMeta extends StatelessWidget {
   }
 }
 
-class _LiveWaveformPanel extends StatefulWidget {
+class _LiveWaveformPanel extends ConsumerStatefulWidget {
   final RadioStation station;
   final bool playing;
   final DateTime? listenStart;
@@ -439,10 +441,10 @@ class _LiveWaveformPanel extends StatefulWidget {
   });
 
   @override
-  State<_LiveWaveformPanel> createState() => _LiveWaveformPanelState();
+  ConsumerState<_LiveWaveformPanel> createState() => _LiveWaveformPanelState();
 }
 
-class _LiveWaveformPanelState extends State<_LiveWaveformPanel> {
+class _LiveWaveformPanelState extends ConsumerState<_LiveWaveformPanel> {
   late final Stream<DateTime> _ticker = Stream.periodic(
     const Duration(seconds: 1),
     (_) => DateTime.now(),
@@ -460,8 +462,17 @@ class _LiveWaveformPanelState extends State<_LiveWaveformPanel> {
   @override
   Widget build(BuildContext context) {
     final s = widget.station;
-    final codec = s.codec.isEmpty ? 'MP3' : s.codec.toUpperCase();
-    final bitrate = s.bitrate > 0 ? '${s.bitrate} KBPS' : '—';
+    // Prefer runtime codec + bitrate from the native player over the Radio
+    // Browser DB values, which for HLS commonly give "MP4" / bitrate=0 even
+    // when the actual audio is something like FLAC at a meaningful rate.
+    final debug = ref.watch(icyDebugStreamProvider).valueOrNull;
+    final runtimeCodec = debug?.codec;
+    final runtimeBitrate = debug?.bitrate ?? 0;
+    final codec = (runtimeCodec != null && runtimeCodec.isNotEmpty)
+        ? runtimeCodec.toUpperCase()
+        : (s.codec.isEmpty ? 'MP3' : s.codec.toUpperCase());
+    final effectiveBitrate = runtimeBitrate > 0 ? runtimeBitrate : s.bitrate;
+    final bitrate = effectiveBitrate > 0 ? '$effectiveBitrate KBPS' : '—';
 
     return Container(
       padding: const EdgeInsets.all(18),
