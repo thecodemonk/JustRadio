@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Declares JustRadio as a media-capable Android Auto app. Referenced from
+     the manifest via meta-data com.google.android.gms.car.application. Without
+     this file the app will not appear in the Android Auto launcher. -->
+<automotiveApp>
+    <uses name="media"/>
+</automotiveApp>

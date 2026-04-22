@@ -6,6 +6,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../data/models/genre_photo.dart';
 import '../../../data/repositories/radio_browser_repository.dart';
 import '../../../data/services/unsplash_service.dart';
+import '../../../providers/audio_player_provider.dart';
 import '../../../providers/unsplash_provider.dart';
 import '../../search/search_provider.dart';
 import 'procedural_genre_art.dart';
@@ -17,6 +18,16 @@ class GenresTab extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final tagsAsync = ref.watch(tagsProvider);
+
+    // Mirror the genre list into the native library store so Android Auto /
+    // CarPlay can browse genres cold. Fires once per successful load.
+    ref.listen(tagsProvider, (_, next) {
+      next.whenData((list) {
+        ref
+            .read(audioPlayerServiceProvider)
+            .syncGenres(list.map((t) => t.name).toList());
+      });
+    });
 
     return tagsAsync.when(
       data: (tags) {

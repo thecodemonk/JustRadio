@@ -402,8 +402,9 @@ class _NowPlayingMain extends ConsumerWidget {
             Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                StationArt(
+                NowPlayingArt(
                   station: station,
+                  albumArtUrl: playerState.albumArtUrl,
                   size: 220,
                   radius: 4,
                   shadow: BoxShadow(
@@ -729,7 +730,12 @@ class _DesktopPlayerBar extends StatelessWidget {
               Expanded(
                 child: Row(
                   children: [
-                    StationArt(station: station, size: 52, radius: 4),
+                    NowPlayingArt(
+                      station: station,
+                      albumArtUrl: playerState.albumArtUrl,
+                      size: 52,
+                      radius: 4,
+                    ),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Column(

@@ -255,8 +255,14 @@ class NativeMobileAudioPlayerService extends AudioPlayerService {
     }
 
     try {
+      // Pass station identity alongside the URL so the native media session
+      // can attribute metadata to the right MediaItem. Android Auto uses
+      // the mediaId + favicon; iOS uses the name in MPNowPlayingInfoCenter.
       await _methodChannel.invokeMethod('playStation', {
         'url': station.streamUrl,
+        'stationuuid': station.stationuuid,
+        'name': station.name,
+        'favicon': station.favicon,
       });
     } catch (e) {
       if (kDebugMode) {
@@ -298,11 +304,77 @@ class NativeMobileAudioPlayerService extends AudioPlayerService {
 
   @override
   Future<void> setVolume(double volume) async {
-    // Same logarithmic curve as the mpv service — match perceived loudness.
+    // Human hearing is logarithmic, so amplitude has to grow exponentially
+    // in the slider for perceived loudness to feel linear. `x^2.5` (cube-
+    // ish audio taper) is the classic fit: slider 0.5 → ~0.18 amplitude
+    // (~half perceived loudness), slider 1.0 → 1.0. Past formula was
+    // log(1 + 9x) which went the wrong way — made the lower half of the
+    // slider jump to ~90% loudness by the midpoint.
     final linear = volume.clamp(0.0, 1.0);
-    final logarithmic =
-        linear <= 0 ? 0.0 : math.log(1 + linear * 9) / math.log(10);
-    await _methodChannel.invokeMethod('setVolume', {'volume': logarithmic});
+    final amplitude = math.pow(linear, 2.5).toDouble();
+    await _methodChannel.invokeMethod('setVolume', {'volume': amplitude});
+  }
+
+  // ------------------------------------------------------------------
+  // Library-tree mirrors. Android Auto can start the PlaybackService cold
+  // (driver plugs in the phone without opening the app first), so we mirror
+  // favorites / recent / genre catalogs into SharedPreferences. The native
+  // MediaLibraryService reads from that same store to serve browse results.
+  // iOS currently ignores these calls (the CarPlay work picks them up in
+  // Phase 3).
+  // ------------------------------------------------------------------
+
+  @override
+  Future<void> syncFavorites(List<RadioStation> stations) async {
+    await _tryInvoke('syncFavorites', {
+      'stations': stations.map(_stationToMap).toList(),
+    });
+  }
+
+  @override
+  Future<void> syncRecent(List<RadioStation> stations) async {
+    await _tryInvoke('syncRecent', {
+      'stations': stations.map(_stationToMap).toList(),
+    });
+  }
+
+  @override
+  Future<void> syncGenres(List<String> tagNames) async {
+    await _tryInvoke('syncGenres', {
+      'genres': tagNames.map((n) => {'name': n}).toList(),
+    });
+  }
+
+  @override
+  Future<void> syncGenreStations(String tag, List<RadioStation> stations) async {
+    await _tryInvoke('syncGenreStations', {
+      'tag': tag,
+      'stations': stations.map(_stationToMap).toList(),
+    });
+  }
+
+  @override
+  Future<void> setAlbumArt(String? url) async {
+    await _tryInvoke('setAlbumArt', {'url': url ?? ''});
+  }
+
+  Map<String, dynamic> _stationToMap(RadioStation s) => {
+        'stationuuid': s.stationuuid,
+        'name': s.name,
+        'streamUrl': s.streamUrl,
+        'favicon': s.favicon,
+        'tags': s.tags,
+        'bitrate': s.bitrate,
+        'codec': s.codec,
+      };
+
+  Future<void> _tryInvoke(String method, Map<String, dynamic> args) async {
+    try {
+      await _methodChannel.invokeMethod(method, args);
+    } catch (e) {
+      // iOS plugin doesn't handle these yet; ignore notImplemented noise.
+      if (kDebugMode) debugPrint('[native] $method skipped: $e');
+    }
   }
 
   @override

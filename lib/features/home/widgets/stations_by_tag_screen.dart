@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../app.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/ambient_bg.dart';
 import '../../../data/repositories/radio_browser_repository.dart';
 import '../../../providers/audio_player_provider.dart';
-import '../../player/player_screen.dart';
 import '../../search/search_provider.dart';
 import '../../search/widgets/station_list_tile.dart';
 
@@ -18,6 +18,15 @@ class StationsByTagScreen extends ConsumerWidget {
     final currentStation = ref.watch(
       radioPlayerControllerProvider.select((s) => s.currentStation),
     );
+
+    // Whenever the station list resolves, mirror it to the native library
+    // store so Android Auto / CarPlay can surface the drill-down cold.
+    // Only fires on success to avoid clearing a stale-but-valid cache.
+    ref.listen(stationsByTagProvider(tag.name), (_, next) {
+      next.whenData((list) {
+        ref.read(audioPlayerServiceProvider).syncGenreStations(tag.name, list);
+      });
+    });
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -72,14 +81,11 @@ class StationsByTagScreen extends ConsumerWidget {
                           final station = list[index];
                           return StationListTile(
                             station: station,
-                            onTap: () {
-                              Navigator.of(context).push(
-                                MaterialPageRoute(
-                                  builder: (_) =>
-                                      PlayerScreen(station: station),
-                                ),
-                              );
-                            },
+                            onTap: () => playStationFromList(
+                              ref: ref,
+                              context: context,
+                              station: station,
+                            ),
                           );
                         },
                       );

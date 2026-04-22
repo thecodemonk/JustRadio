@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/app_theme.dart';
@@ -10,7 +12,6 @@ import '../../providers/audio_player_provider.dart';
 import '../../providers/favorites_provider.dart';
 import '../../providers/lastfm_provider.dart';
 import '../../providers/sleep_timer_provider.dart';
-import 'widgets/icy_debug_overlay.dart';
 
 class PlayerScreen extends ConsumerStatefulWidget {
   final RadioStation station;
@@ -177,8 +178,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
                   _LiveBreadcrumb(station: station),
                   const SizedBox(height: 32),
                   Center(
-                    child: StationArt(
+                    child: NowPlayingArt(
                       station: station,
+                      albumArtUrl: playerState.albumArtUrl,
                       size: 260,
                       radius: 8,
                       shadow: BoxShadow(
@@ -222,9 +224,6 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
                       Navigator.of(context).pop();
                     },
                   ),
-                  const SizedBox(height: 28),
-                  const _VolumeControl(),
-                  const IcyDebugOverlay(),
                 ],
               ),
             ),
@@ -579,8 +578,172 @@ class _PlayerControls extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 28),
-        const SizedBox(width: 44),
+        const _VolumePopoverButton(),
       ],
+    );
+  }
+}
+
+/// Volume control — shows a speaker button; click it to reveal a vertical
+/// slider in a popover. Slider auto-hides after a short idle window. Matches
+/// the Netflix / Plex volume-control pattern.
+class _VolumePopoverButton extends ConsumerStatefulWidget {
+  const _VolumePopoverButton();
+
+  @override
+  ConsumerState<_VolumePopoverButton> createState() =>
+      _VolumePopoverButtonState();
+}
+
+class _VolumePopoverButtonState extends ConsumerState<_VolumePopoverButton> {
+  final _overlayController = OverlayPortalController();
+  final _layerLink = LayerLink();
+  Timer? _hideTimer;
+
+  /// How long the popover stays visible after the user last touched it.
+  static const _idleHide = Duration(milliseconds: 2500);
+
+  @override
+  void dispose() {
+    _hideTimer?.cancel();
+    super.dispose();
+  }
+
+  void _toggle() {
+    if (_overlayController.isShowing) {
+      _hide();
+    } else {
+      _overlayController.show();
+      _armHideTimer();
+    }
+  }
+
+  void _armHideTimer() {
+    _hideTimer?.cancel();
+    _hideTimer = Timer(_idleHide, _hide);
+  }
+
+  void _hide() {
+    _hideTimer?.cancel();
+    if (_overlayController.isShowing) _overlayController.hide();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final volume = ref.watch(volumeProvider);
+    final icon = volume <= 0
+        ? Icons.volume_off
+        : volume < 0.5
+            ? Icons.volume_down
+            : Icons.volume_up;
+
+    return CompositedTransformTarget(
+      link: _layerLink,
+      child: OverlayPortal(
+        controller: _overlayController,
+        overlayChildBuilder: (ctx) => _buildOverlay(ctx, volume),
+        child: _SecondaryButton(icon: icon, onTap: _toggle),
+      ),
+    );
+  }
+
+  Widget _buildOverlay(BuildContext ctx, double volume) {
+    // Full-screen tap catcher so clicks outside the popover dismiss it,
+    // same as a native macOS popover.
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTap: _hide,
+          ),
+        ),
+        CompositedTransformFollower(
+          link: _layerLink,
+          followerAnchor: Alignment.bottomCenter,
+          targetAnchor: Alignment.topCenter,
+          offset: const Offset(0, -10),
+          child: Material(
+            color: Colors.transparent,
+            child: _VolumeSliderCard(
+              value: volume,
+              onChanged: (v) {
+                ref.read(volumeProvider.notifier).setVolume(v);
+                _armHideTimer();
+              },
+              onInteraction: _armHideTimer,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _VolumeSliderCard extends StatelessWidget {
+  final double value;
+  final ValueChanged<double> onChanged;
+  final VoidCallback onInteraction;
+
+  const _VolumeSliderCard({
+    required this.value,
+    required this.onChanged,
+    required this.onInteraction,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // Vertical slider via RotatedBox. 140pt tall is big enough to be
+    // usable with a trackpad but small enough not to dominate the screen.
+    return MouseRegion(
+      onEnter: (_) => onInteraction(),
+      onHover: (_) => onInteraction(),
+      child: Container(
+        width: 44,
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
+        decoration: BoxDecoration(
+          color: AppColors.bgElevated.withValues(alpha: 0.96),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppColors.border(0.1)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.4),
+              blurRadius: 22,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.volume_up,
+                size: 14, color: AppColors.onBgMuted(0.7)),
+            SizedBox(
+              height: 140,
+              child: RotatedBox(
+                quarterTurns: 3,
+                child: SliderTheme(
+                  data: SliderTheme.of(context).copyWith(
+                    trackHeight: 3,
+                    thumbShape: const RoundSliderThumbShape(
+                        enabledThumbRadius: 6),
+                    overlayShape: const RoundSliderOverlayShape(
+                        overlayRadius: 14),
+                  ),
+                  child: Slider(
+                    value: value,
+                    onChanged: onChanged,
+                    onChangeStart: (_) => onInteraction(),
+                    onChangeEnd: (_) => onInteraction(),
+                  ),
+                ),
+              ),
+            ),
+            Icon(Icons.volume_down,
+                size: 14, color: AppColors.onBgMuted(0.7)),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -609,36 +772,6 @@ class _SecondaryButton extends StatelessWidget {
           child: Icon(icon, color: AppColors.onBg, size: 20),
         ),
       ),
-    );
-  }
-}
-
-class _VolumeControl extends ConsumerWidget {
-  const _VolumeControl();
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final volume = ref.watch(volumeProvider);
-    return Row(
-      children: [
-        Icon(
-          volume == 0 ? Icons.volume_off : Icons.volume_down,
-          color: AppColors.onBgMuted(0.55),
-          size: 18,
-        ),
-        Expanded(
-          child: Slider(
-            value: volume,
-            onChanged: (v) =>
-                ref.read(volumeProvider.notifier).setVolume(v),
-          ),
-        ),
-        Icon(
-          Icons.volume_up,
-          color: AppColors.onBgMuted(0.55),
-          size: 18,
-        ),
-      ],
     );
   }
 }

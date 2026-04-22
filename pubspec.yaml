@@ -40,15 +40,16 @@ dependencies:
   hive: ^2.2.3
   hive_flutter: ^1.1.0
 
-  # Audio Playback (media_kit for better ICY metadata support)
-  # Using full libs (not audio-only) for HLS/FLAC support
+  # Audio Playback (media_kit for better ICY metadata support — desktop only).
+  # Mobile uses a native ExoPlayer/AVPlayer bridge via AudioPlayerPlugin, but
+  # media_kit's mobile pods stay declared so the Dart imports of
+  # mpv_audio_player_service.dart link cleanly on those platforms.
   media_kit: ^1.1.11
   media_kit_libs_macos_video: ^1.1.4
   media_kit_libs_ios_video: ^1.1.4
   media_kit_libs_windows_video: ^1.0.9
   media_kit_libs_linux: ^1.1.3
   media_kit_libs_android_video: ^1.3.6
-  audio_service: ^0.18.15
 
   # HTTP Client
   dio: ^5.4.3+1

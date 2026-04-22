@@ -13,7 +13,8 @@
 		6305BE3594E674B06CC445DA /* Pods_RunnerTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4E7785BC96FB58ABDAB3E416 /* Pods_RunnerTests.framework */; };
 		74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74858FAE1ED2DC5600515810 /* AppDelegate.swift */; };
 		AB00000000000000AB000001 /* AudioPlayerPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB00000000000000AB000002 /* AudioPlayerPlugin.swift */; };
-		AB00000000000000AB000003 /* IcyMetadataReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB00000000000000AB000004 /* IcyMetadataReader.swift */; };
+		AB00000000000000AB000003 /* IcyLocalHttpProxy.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB00000000000000AB000004 /* IcyLocalHttpProxy.swift */; };
+		AB00000000000000AB000005 /* CarPlaySceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB00000000000000AB000006 /* CarPlaySceneDelegate.swift */; };
 		97C146FC1CF9000F007C117D /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FA1CF9000F007C117D /* Main.storyboard */; };
 		97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FD1CF9000F007C117D /* Assets.xcassets */; };
 		97C147011CF9000F007C117D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FF1CF9000F007C117D /* LaunchScreen.storyboard */; };
@@ -54,7 +55,8 @@
 		74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Runner-Bridging-Header.h"; sourceTree = "<group>"; };
 		74858FAE1ED2DC5600515810 /* AppDelegate.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		AB00000000000000AB000002 /* AudioPlayerPlugin.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AudioPlayerPlugin.swift; sourceTree = "<group>"; };
-		AB00000000000000AB000004 /* IcyMetadataReader.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = IcyMetadataReader.swift; sourceTree = "<group>"; };
+		AB00000000000000AB000004 /* IcyLocalHttpProxy.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = IcyLocalHttpProxy.swift; sourceTree = "<group>"; };
+		AB00000000000000AB000006 /* CarPlaySceneDelegate.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = CarPlaySceneDelegate.swift; sourceTree = "<group>"; };
 		7AFA3C8E1D35360C0083082E /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = Release.xcconfig; path = Flutter/Release.xcconfig; sourceTree = "<group>"; };
 		7E0BF78EC68BD8BEFCE765D4 /* Pods-Runner.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.profile.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.profile.xcconfig"; sourceTree = "<group>"; };
 		7FF85CF1758B88F99AF540C2 /* Pods-RunnerTests.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.release.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.release.xcconfig"; sourceTree = "<group>"; };
@@ -156,7 +158,8 @@
 				1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */,
 				74858FAE1ED2DC5600515810 /* AppDelegate.swift */,
 				AB00000000000000AB000002 /* AudioPlayerPlugin.swift */,
-				AB00000000000000AB000004 /* IcyMetadataReader.swift */,
+				AB00000000000000AB000004 /* IcyLocalHttpProxy.swift */,
+				AB00000000000000AB000006 /* CarPlaySceneDelegate.swift */,
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
 			);
 			path = Runner;
@@ -385,7 +388,8 @@
 			files = (
 				74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */,
 				AB00000000000000AB000001 /* AudioPlayerPlugin.swift in Sources */,
-				AB00000000000000AB000003 /* IcyMetadataReader.swift in Sources */,
+				AB00000000000000AB000003 /* IcyLocalHttpProxy.swift in Sources */,
+				AB00000000000000AB000005 /* CarPlaySceneDelegate.swift in Sources */,
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

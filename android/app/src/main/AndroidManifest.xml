@@ -37,22 +37,30 @@
             android:name="flutterEmbedding"
             android:value="2" />
 
-        <!-- Audio Service for background playback -->
+        <!-- Android Auto capabilities descriptor. Referenced below so Android
+             Auto discovers JustRadio in its launcher. -->
+        <meta-data
+            android:name="com.google.android.gms.car.application"
+            android:resource="@xml/automotive_app_desc" />
+
+        <!-- PlaybackService owns ExoPlayer + the MediaLibrarySession used for
+             the phone UI, lock-screen controls, and Android Auto. The
+             intent-filter advertises both the modern MediaSessionService and
+             the legacy MediaBrowserService action so Android Auto (which
+             dispatches the legacy action) can bind. -->
         <service
-            android:name="com.ryanheise.audioservice.AudioService"
+            android:name=".PlaybackService"
             android:foregroundServiceType="mediaPlayback"
             android:exported="true">
             <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
                 <action android:name="android.media.browse.MediaBrowserService" />
             </intent-filter>
         </service>
-        <receiver
-            android:name="com.ryanheise.audioservice.MediaButtonReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MEDIA_BUTTON" />
-            </intent-filter>
-        </receiver>
+        <!-- Media-button broadcasts (Bluetooth headset, wired remote) route
+             to the session automatically via media3 when the service is
+             foreground; no dedicated receiver needed. -->
+
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

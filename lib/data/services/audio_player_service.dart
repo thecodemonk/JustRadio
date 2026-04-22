@@ -61,6 +61,21 @@ abstract class AudioPlayerService {
   Future<void> setVolume(double volume);
   Future<void> dispose();
 
+  // Library-tree mirrors for Android Auto / CarPlay. Default no-ops — only
+  // the native mobile service writes these into SharedPreferences / NSUserDefaults
+  // so the platform media sessions can serve the browse tree when the Flutter
+  // activity isn't running.
+  Future<void> syncFavorites(List<RadioStation> stations) async {}
+  Future<void> syncRecent(List<RadioStation> stations) async {}
+  Future<void> syncGenres(List<String> tagNames) async {}
+  Future<void> syncGenreStations(String tag, List<RadioStation> stations) async {}
+
+  /// Push the current track's album art URL to the native lock-screen /
+  /// Android Auto / CarPlay now-playing surface. Null clears it. Default
+  /// no-op on desktop (media_kit doesn't need this — album art flows
+  /// through the Flutter UI directly).
+  Future<void> setAlbumArt(String? url) async {}
+
   static Future<void> init() async {
     MediaKit.ensureInitialized();
   }

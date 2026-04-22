@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io' show Platform;
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/models/radio_station.dart';
 import '../data/models/now_playing.dart';
@@ -7,17 +8,23 @@ import '../data/services/audio_player_service.dart';
 import '../data/services/mpv_audio_player_service.dart';
 import '../data/services/native_mobile_audio_player_service.dart';
 import '../data/repositories/radio_browser_repository.dart';
+import 'album_art_provider.dart';
 import 'lastfm_provider.dart';
 import 'recent_plays_provider.dart';
+import 'unsplash_provider.dart' show appSettingsRepositoryProvider;
 
 final audioPlayerServiceProvider = Provider<AudioPlayerService>((ref) {
-  // Mobile uses a native AVPlayer/ExoPlayer bridge — handles ICY StreamTitle
-  // AND HLS ID3 timed metadata, and is the same native surface we'll extend
-  // for MPNowPlayingInfoCenter/CarPlay (iOS) and MediaSession/Android Auto.
-  // Desktop stays on media_kit/mpv.
-  final onMobile = Platform.isAndroid || Platform.isIOS;
-  final AudioPlayerService service =
-      onMobile ? NativeMobileAudioPlayerService() : MpvAudioPlayerService();
+  // Apple platforms + Android use the native platform bridge:
+  //   - iOS + macOS both go through AudioPlayerPlugin.swift (AVPlayer +
+  //     AVAssetResourceLoader for ICY + AVPlayerItemMetadataOutput for HLS ID3)
+  //   - Android uses AudioPlayerPlugin.kt (MediaLibraryService + ExoPlayer)
+  // Windows and Linux stay on media_kit/mpv — mpv's HLS ID3 support is
+  // absent (mpv#14756), but on Apple platforms AVPlayer handles it natively.
+  final hasNativeBridge =
+      Platform.isAndroid || Platform.isIOS || Platform.isMacOS;
+  final AudioPlayerService service = hasNativeBridge
+      ? NativeMobileAudioPlayerService()
+      : MpvAudioPlayerService();
 
   ref.onDispose(() {
     // Fire-and-forget: Provider.onDispose is sync. The service awaits its
@@ -64,12 +71,18 @@ class RadioPlayerState {
   final bool isLoading;
   final String? error;
 
+  /// Album art URL for the current [nowPlaying] track, when lookup has
+  /// succeeded. Null when lookup is pending, missed, or the track has no
+  /// artist/title yet. UI falls back to station logo.
+  final String? albumArtUrl;
+
   RadioPlayerState({
     this.currentStation,
     NowPlaying? nowPlaying,
     this.isPlaying = false,
     this.isLoading = false,
     this.error,
+    this.albumArtUrl,
   }) : nowPlaying = nowPlaying ?? NowPlaying.empty();
 
   RadioPlayerState copyWith({
@@ -78,8 +91,10 @@ class RadioPlayerState {
     bool? isPlaying,
     bool? isLoading,
     String? error,
+    String? albumArtUrl,
     bool clearStation = false,
     bool clearError = false,
+    bool clearAlbumArt = false,
   }) {
     return RadioPlayerState(
       currentStation: clearStation ? null : (currentStation ?? this.currentStation),
@@ -87,6 +102,7 @@ class RadioPlayerState {
       isPlaying: isPlaying ?? this.isPlaying,
       isLoading: isLoading ?? this.isLoading,
       error: clearError ? null : (error ?? this.error),
+      albumArtUrl: clearAlbumArt ? null : (albumArtUrl ?? this.albumArtUrl),
     );
   }
 }
@@ -98,6 +114,13 @@ class RadioPlayerController extends StateNotifier<RadioPlayerState> {
   StreamSubscription? _nowPlayingSubscription;
   DateTime? _trackStartTime;
   NowPlaying? _lastScrobbledTrack;
+
+  // Album-art lookup debouncing. Metadata often arrives in bursts (HLS sends
+  // TIT2 and TPE1 as separate frames) — debounce so we don't fire a lookup
+  // against the half-filled pair. Dedupe by the resolved key to avoid
+  // repeated lookups when the same track's metadata arrives twice.
+  Timer? _albumArtDebounce;
+  NowPlaying? _lastArtLookupKey;
 
   RadioPlayerController(this._ref) : super(RadioPlayerState()) {
     _initListeners();
@@ -123,13 +146,87 @@ class RadioPlayerController extends StateNotifier<RadioPlayerState> {
 
     _nowPlayingSubscription = _playerService.nowPlayingStream.listen((nowPlaying) {
       final previousNowPlaying = state.nowPlaying;
-      state = state.copyWith(nowPlaying: nowPlaying);
+      // Clear stale album art whenever the track identity changes — the
+      // new lookup will fill it back in below (or leave it null on miss).
+      final artChanged = nowPlaying != previousNowPlaying;
+      state = state.copyWith(
+        nowPlaying: nowPlaying,
+        clearAlbumArt: artChanged,
+      );
 
-      // Handle Last.fm integration
-      if (nowPlaying.isNotEmpty && nowPlaying != previousNowPlaying) {
+      // Handle Last.fm integration + album art lookup
+      if (nowPlaying.isNotEmpty && artChanged) {
         _handleTrackChange(nowPlaying, previousNowPlaying);
+        _scheduleAlbumArtLookup(nowPlaying);
       }
     });
+  }
+
+  void _scheduleAlbumArtLookup(NowPlaying nowPlaying) {
+    if (nowPlaying.artist.isEmpty || nowPlaying.title.isEmpty) {
+      if (kDebugMode) {
+        debugPrint(
+          '[albumart] skip: missing artist/title (artist="${nowPlaying.artist}" title="${nowPlaying.title}")',
+        );
+      }
+      return;
+    }
+    if (_looksLikeStationId(nowPlaying.artist)) {
+      if (kDebugMode) {
+        debugPrint(
+          '[albumart] skip: "${nowPlaying.artist}" looks like a station id',
+        );
+      }
+      return;
+    }
+    if (_lastArtLookupKey == nowPlaying) return;
+
+    if (kDebugMode) {
+      debugPrint(
+        '[albumart] scheduling lookup: artist="${nowPlaying.artist}" title="${nowPlaying.title}"',
+      );
+    }
+    _albumArtDebounce?.cancel();
+    _albumArtDebounce = Timer(const Duration(milliseconds: 500), () {
+      _runAlbumArtLookup(nowPlaying);
+    });
+  }
+
+  bool _looksLikeStationId(String candidate) {
+    // Station IDs tend to contain a colon and a space (e.g. "SomaFM: ...")
+    // or match the currently-playing station's name.
+    if (candidate.contains(': ')) return true;
+    final station = state.currentStation;
+    if (station != null &&
+        candidate.toLowerCase() == station.name.toLowerCase()) {
+      return true;
+    }
+    return false;
+  }
+
+  Future<void> _runAlbumArtLookup(NowPlaying nowPlaying) async {
+    _lastArtLookupKey = nowPlaying;
+    try {
+      final art = await _ref.read(albumArtProvider((
+        artist: nowPlaying.artist,
+        title: nowPlaying.title,
+      )).future);
+      if (kDebugMode) {
+        debugPrint(
+          '[albumart] lookup result: source=${art?.source} url=${art?.imageUrl}',
+        );
+      }
+      // Drop the result if the user has since moved on to another track.
+      if (state.nowPlaying != nowPlaying) return;
+      if (art != null && art.hasImage) {
+        state = state.copyWith(albumArtUrl: art.imageUrl);
+        await _playerService.setAlbumArt(art.imageUrl);
+      }
+    } catch (e, stack) {
+      if (kDebugMode) {
+        debugPrint('[albumart] lookup failed: $e\n$stack');
+      }
+    }
   }
 
   // Last.fm's scrobble policy requires "played for at least half the track or
@@ -232,6 +329,7 @@ class RadioPlayerController extends StateNotifier<RadioPlayerState> {
     _playbackStateSubscription?.cancel();
     _stationSubscription?.cancel();
     _nowPlayingSubscription?.cancel();
+    _albumArtDebounce?.cancel();
     super.dispose();
   }
 }
@@ -240,7 +338,9 @@ final radioBrowserRepositoryProvider = Provider<RadioBrowserRepository>((ref) {
   return RadioBrowserRepository();
 });
 
-// Volume control provider
+// Volume control provider. State seeded from the persisted Hive setting,
+// so the slider position survives app restarts. Every change writes back
+// to the same store on the way to the native player.
 final volumeProvider = StateNotifierProvider<VolumeController, double>((ref) {
   return VolumeController(ref);
 });
@@ -248,10 +348,27 @@ final volumeProvider = StateNotifierProvider<VolumeController, double>((ref) {
 class VolumeController extends StateNotifier<double> {
   final Ref _ref;
 
-  VolumeController(this._ref) : super(1.0);
+  VolumeController(Ref ref)
+      : _ref = ref,
+        super(ref.read(appSettingsRepositoryProvider).volume) {
+    // Push the persisted volume down to the native player so stations
+    // start at the right level even before the user touches the slider.
+    // Best-effort: if the native plugin hasn't attached yet, this
+    // invocation is effectively dropped and the user adjusting the slider
+    // will re-push via setVolume() below. The iOS/macOS plugin has its
+    // own `lastVolume` field that catches up newly-created AVPlayers; the
+    // Android plugin mirrors that on controller connect.
+    Future.microtask(() async {
+      try {
+        await _ref.read(audioPlayerServiceProvider).setVolume(state);
+      } catch (_) {}
+    });
+  }
 
   Future<void> setVolume(double volume) async {
-    state = volume.clamp(0.0, 1.0);
-    await _ref.read(audioPlayerServiceProvider).setVolume(state);
+    final clamped = volume.clamp(0.0, 1.0);
+    state = clamped;
+    await _ref.read(appSettingsRepositoryProvider).setVolume(clamped);
+    await _ref.read(audioPlayerServiceProvider).setVolume(clamped);
   }
 }

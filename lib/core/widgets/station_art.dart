@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import '../../data/models/radio_station.dart';
 import '../theme/app_theme.dart';
@@ -108,6 +109,67 @@ class StationArt extends StatelessWidget {
       child: ClipRRect(
         borderRadius: BorderRadius.circular(radius),
         child: SizedBox(width: size, height: size, child: image),
+      ),
+    );
+  }
+}
+
+/// Station art with an optional track-level album art overlay. When
+/// `albumArtUrl` is non-null, the album art fades in over the station logo
+/// and stays until the track changes. The underlying [StationArt] is the
+/// fallback — we never show a blank box if the album art fails to load.
+class NowPlayingArt extends StatelessWidget {
+  final RadioStation station;
+  final String? albumArtUrl;
+  final double size;
+  final double radius;
+  final BoxShadow? shadow;
+
+  const NowPlayingArt({
+    super.key,
+    required this.station,
+    this.albumArtUrl,
+    this.size = 64,
+    this.radius = 6,
+    this.shadow,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final base = StationArt(
+      station: station,
+      size: size,
+      radius: radius,
+      shadow: shadow,
+    );
+
+    final url = albumArtUrl;
+    if (url == null || url.isEmpty) return base;
+
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          base,
+          ClipRRect(
+            borderRadius: BorderRadius.circular(radius),
+            // AnimatedSwitcher keyed on URL so a new track cross-fades
+            // instead of snapping — feels more like a music app.
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 300),
+              child: CachedNetworkImage(
+                key: ValueKey(url),
+                imageUrl: url,
+                fit: BoxFit.cover,
+                fadeInDuration: const Duration(milliseconds: 200),
+                placeholder: (_, __) => const SizedBox.shrink(),
+                errorWidget: (_, __, ___) => const SizedBox.shrink(),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

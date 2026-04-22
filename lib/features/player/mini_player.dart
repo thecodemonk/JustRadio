@@ -41,7 +41,12 @@ class MiniPlayer extends ConsumerWidget {
                   horizontal: 12, vertical: 10),
               child: Row(
                 children: [
-                  StationArt(station: station, size: 44, radius: 4),
+                  NowPlayingArt(
+                    station: station,
+                    albumArtUrl: playerState.albumArtUrl,
+                    size: 44,
+                    radius: 4,
+                  ),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(
