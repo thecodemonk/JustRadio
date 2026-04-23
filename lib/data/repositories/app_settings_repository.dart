@@ -5,6 +5,8 @@ class AppSettingsRepository {
   static const _boxName = 'app_settings';
   // Legacy key — read-only for one-time migration to secure storage.
   static const _legacyUnsplashKey = 'unsplash_access_key';
+  static const _volumeKey = 'volume';
+  static const _defaultVolume = 1.0;
 
   final SecureSecretsService _secrets;
   Box? _box;
@@ -45,4 +47,16 @@ class AppSettingsRepository {
     }
   }
 
+  /// Persisted linear volume (0..1). Defaults to full volume on first run.
+  /// The UI slider maps 1:1 to this; the audio service applies the cube
+  /// taper when pushing down to the native player.
+  double get volume {
+    final v = _box?.get(_volumeKey);
+    if (v is double && v.isFinite) return v.clamp(0.0, 1.0);
+    return _defaultVolume;
+  }
+
+  Future<void> setVolume(double volume) async {
+    await _box?.put(_volumeKey, volume.clamp(0.0, 1.0));
+  }
 }

@@ -1,19 +1,51 @@
 import 'dart:ui';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/theme/app_theme.dart';
 import 'core/widgets/ambient_bg.dart';
+import 'data/models/radio_station.dart';
 import 'features/home/home_screen.dart';
 import 'features/search/search_screen.dart';
 import 'features/favorites/favorites_screen.dart';
 import 'features/settings/settings_screen.dart';
 import 'features/player/mini_player.dart';
+import 'features/player/player_screen.dart';
 import 'features/shell/desktop_shell.dart';
 import 'providers/audio_player_provider.dart';
 
 final navigationIndexProvider = StateProvider<int>((ref) => 0);
 
 const double kDesktopBreakpoint = 960;
+
+/// Play a station and route to the appropriate now-playing UI.
+///
+/// - Desktop layout (width >= kDesktopBreakpoint): switches the sidebar
+///   tab to Now Playing. The persistent player bar stays visible and the
+///   user never leaves the shell.
+/// - Mobile layout: pushes the full-screen PlayerScreen route.
+///
+/// Every station-tap in a list should go through this function — bypassing
+/// it with a raw Navigator.push results in a modal-feeling PlayerScreen on
+/// top of the desktop shell, which feels wrong (you'd have to dismiss it
+/// to get back to the sidebar, even though the player bar is there too).
+void playStationFromList({
+  required WidgetRef ref,
+  required BuildContext context,
+  required RadioStation station,
+}) {
+  ref.read(radioPlayerControllerProvider.notifier).playStation(station);
+  final isDesktopLayout =
+      MediaQuery.of(context).size.width >= kDesktopBreakpoint;
+  if (isDesktopLayout) {
+    ref.read(desktopNavProvider.notifier).state = DesktopNav.nowPlaying;
+  } else {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => PlayerScreen(station: station)),
+    );
+  }
+}
 
 class JustRadioApp extends StatelessWidget {
   const JustRadioApp({super.key});
@@ -26,7 +58,32 @@ class JustRadioApp extends StatelessWidget {
       theme: AppTheme.dark(),
       darkTheme: AppTheme.dark(),
       themeMode: ThemeMode.dark,
-      home: const MainNavigationScreen(),
+      home: CallbackShortcuts(
+        // Diagnostic keybinding: ⌘⇧R forces a full widget reassemble.
+        // Use this when the UI becomes un-clickable without a window resize —
+        // if this fixes it, the bug is a Flutter hit-test invalidation (a
+        // known class of issues on macOS); if it doesn't, something deeper
+        // in the engine or platform view is wrong. Ships in all builds
+        // because the issue has only been seen in release so far.
+        bindings: {
+          const SingleActivator(
+            LogicalKeyboardKey.keyR,
+            meta: true,
+            shift: true,
+          ): () {
+            // ignore: avoid_print
+            if (kDebugMode) print('[justradio] force-reassemble triggered');
+            WidgetsBinding.instance.reassembleApplication();
+          },
+        },
+        child: const Focus(
+          autofocus: true,
+          skipTraversal: true,
+          canRequestFocus: true,
+          descendantsAreFocusable: true,
+          child: MainNavigationScreen(),
+        ),
+      ),
     );
   }
 }

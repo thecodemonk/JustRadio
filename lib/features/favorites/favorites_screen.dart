@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../app.dart';
 import '../../core/theme/app_theme.dart';
 import '../../data/models/radio_station.dart';
 import '../../providers/favorites_provider.dart';
 import '../search/widgets/station_list_tile.dart';
-import '../player/player_screen.dart';
 
 class FavoritesScreen extends ConsumerWidget {
   const FavoritesScreen({super.key});
@@ -128,13 +128,11 @@ class FavoritesScreen extends ConsumerWidget {
           },
           child: StationListTile(
             station: station,
-            onTap: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (context) => PlayerScreen(station: station),
-                ),
-              );
-            },
+            onTap: () => playStationFromList(
+              ref: ref,
+              context: context,
+              station: station,
+            ),
           ),
         );
       },

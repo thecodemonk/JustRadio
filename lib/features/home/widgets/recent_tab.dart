@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../app.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/station_art.dart';
 import '../../../providers/audio_player_provider.dart';
 import '../../../providers/recent_plays_provider.dart';
-import '../../player/player_screen.dart';
 
 class RecentTab extends ConsumerWidget {
   const RecentTab({super.key});
@@ -49,13 +49,11 @@ class RecentTab extends ConsumerWidget {
         return Material(
           color: Colors.transparent,
           child: InkWell(
-            onTap: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => PlayerScreen(station: station),
-                ),
-              );
-            },
+            onTap: () => playStationFromList(
+              ref: ref,
+              context: context,
+              station: station,
+            ),
             borderRadius: BorderRadius.circular(10),
             child: Container(
               padding:

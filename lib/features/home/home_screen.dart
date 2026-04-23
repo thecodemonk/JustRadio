@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../app.dart';
 import '../../core/theme/app_theme.dart';
 import '../../data/models/radio_station.dart';
 import '../../providers/audio_player_provider.dart';
 import '../search/widgets/station_list_tile.dart';
-import '../player/player_screen.dart';
 import 'widgets/genres_tab.dart';
 import 'widgets/recent_tab.dart';
 
@@ -135,13 +135,11 @@ class _StationListView extends ConsumerWidget {
               final station = list[index];
               return StationListTile(
                 station: station,
-                onTap: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => PlayerScreen(station: station),
-                    ),
-                  );
-                },
+                onTap: () => playStationFromList(
+                  ref: ref,
+                  context: context,
+                  station: station,
+                ),
               );
             },
           ),

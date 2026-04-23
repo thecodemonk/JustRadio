@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../app.dart';
 import '../../core/theme/app_theme.dart';
 import '../../data/models/radio_station.dart';
-import '../player/player_screen.dart';
 import 'search_provider.dart';
 import 'widgets/station_list_tile.dart';
 
@@ -202,14 +202,11 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                 final station = stations[index];
                 return StationListTile(
                   station: station,
-                  onTap: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (context) =>
-                            PlayerScreen(station: station),
-                      ),
-                    );
-                  },
+                  onTap: () => playStationFromList(
+                    ref: ref,
+                    context: context,
+                    station: station,
+                  ),
                 );
               },
             ),
