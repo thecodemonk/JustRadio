@@ -11,14 +11,15 @@ import 'audio_player_service.dart';
 // and error lines still print under kDebugMode.
 const _verboseLogging = false;
 
-/// Talks to the native iOS/Android audio engine over two channels:
+/// Talks to the native platform audio engine (iOS + macOS AVPlayer,
+/// Android ExoPlayer via MediaLibraryService) over two channels:
 ///   - MethodChannel "justradio/audio": play/pause/stop/setVolume commands
 ///   - EventChannel "justradio/audio/events": state + metadata updates
 ///
 /// Uniformly handles ICY StreamTitle (Shoutcast/Icecast) and HLS ID3 timed
-/// metadata — both platforms emit a `{type: "metadata", title: "..."}`
+/// metadata — every platform emits a `{type: "metadata", title: "..."}`
 /// payload when a usable title is found, regardless of underlying protocol.
-class NativeMobileAudioPlayerService extends AudioPlayerService {
+class NativeAudioPlayerService extends AudioPlayerService {
   static const _methodChannel = MethodChannel('justradio/audio');
   static const _eventChannel = EventChannel('justradio/audio/events');
 
@@ -40,7 +41,7 @@ class NativeMobileAudioPlayerService extends AudioPlayerService {
   int? _bitrate;
   String? _lastRawUrl;
 
-  NativeMobileAudioPlayerService() {
+  NativeAudioPlayerService() {
     _waitForPluginThenSubscribe();
   }
 

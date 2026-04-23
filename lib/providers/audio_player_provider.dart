@@ -6,7 +6,7 @@ import '../data/models/radio_station.dart';
 import '../data/models/now_playing.dart';
 import '../data/services/audio_player_service.dart';
 import '../data/services/mpv_audio_player_service.dart';
-import '../data/services/native_mobile_audio_player_service.dart';
+import '../data/services/native_audio_player_service.dart';
 import '../data/repositories/radio_browser_repository.dart';
 import 'album_art_provider.dart';
 import 'lastfm_provider.dart';
@@ -23,7 +23,7 @@ final audioPlayerServiceProvider = Provider<AudioPlayerService>((ref) {
   final hasNativeBridge =
       Platform.isAndroid || Platform.isIOS || Platform.isMacOS;
   final AudioPlayerService service = hasNativeBridge
-      ? NativeMobileAudioPlayerService()
+      ? NativeAudioPlayerService()
       : MpvAudioPlayerService();
 
   ref.onDispose(() {

@@ -308,7 +308,7 @@ class MpvAudioPlayerService extends AudioPlayerService {
 
   @override
   Future<void> setVolume(double volume) async {
-    // Cube-ish audio taper — see native_mobile_audio_player_service for
+    // Cube-ish audio taper — see native_audio_player_service for
     // the rationale. Amplitude = linear^2.5 so the slider feels linear to
     // the ear. mpv.setVolume takes 0..100.
     final linear = volume.clamp(0.0, 1.0);
