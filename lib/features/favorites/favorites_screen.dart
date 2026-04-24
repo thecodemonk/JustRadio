@@ -3,8 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app.dart';
 import '../../core/theme/app_theme.dart';
 import '../../data/models/radio_station.dart';
+import '../../data/services/favorites_io_service.dart';
 import '../../providers/favorites_provider.dart';
 import '../search/widgets/station_list_tile.dart';
+
+enum _FavoritesMenuAction { import, export, clear }
 
 class FavoritesScreen extends ConsumerWidget {
   const FavoritesScreen({super.key});
@@ -40,13 +43,45 @@ class FavoritesScreen extends ConsumerWidget {
                       ],
                     ),
                   ),
-                  if (favorites.isNotEmpty)
-                    IconButton(
-                      tooltip: 'Clear all',
-                      icon: Icon(Icons.delete_outline,
-                          color: AppColors.onBgMuted(0.6)),
-                      onPressed: () => _showClearDialog(context, ref),
-                    ),
+                  PopupMenuButton<_FavoritesMenuAction>(
+                    tooltip: 'More',
+                    icon: Icon(Icons.more_vert,
+                        color: AppColors.onBgMuted(0.6)),
+                    onSelected: (action) =>
+                        _handleMenuAction(context, ref, action),
+                    itemBuilder: (context) => [
+                      const PopupMenuItem(
+                        value: _FavoritesMenuAction.import,
+                        child: ListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(Icons.file_download_outlined),
+                          title: Text('Import from file...'),
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: _FavoritesMenuAction.export,
+                        enabled: favorites.isNotEmpty,
+                        child: const ListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(Icons.file_upload_outlined),
+                          title: Text('Export to file...'),
+                        ),
+                      ),
+                      if (favorites.isNotEmpty) const PopupMenuDivider(),
+                      if (favorites.isNotEmpty)
+                        const PopupMenuItem(
+                          value: _FavoritesMenuAction.clear,
+                          child: ListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            leading: Icon(Icons.delete_outline),
+                            title: Text('Clear all'),
+                          ),
+                        ),
+                    ],
+                  ),
                 ],
               ),
             ),
@@ -147,6 +182,72 @@ class FavoritesScreen extends ConsumerWidget {
             ref.read(favoritesProvider.notifier).add(station),
       ),
     );
+  }
+
+  Future<void> _handleMenuAction(
+    BuildContext context,
+    WidgetRef ref,
+    _FavoritesMenuAction action,
+  ) async {
+    switch (action) {
+      case _FavoritesMenuAction.import:
+        await _importFavorites(context, ref);
+      case _FavoritesMenuAction.export:
+        await _exportFavorites(context, ref);
+      case _FavoritesMenuAction.clear:
+        _showClearDialog(context, ref);
+    }
+  }
+
+  Future<void> _importFavorites(BuildContext context, WidgetRef ref) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final stations = await FavoritesIoService().importFromFile();
+      if (stations == null) return; // user cancelled
+      if (stations.isEmpty) {
+        messenger.showSnackBar(
+          const SnackBar(content: Text('No stations found in file')),
+        );
+        return;
+      }
+      final result =
+          await ref.read(favoritesProvider.notifier).importMerge(stations);
+      final parts = <String>[
+        if (result.added > 0)
+          'Added ${result.added} station${result.added == 1 ? '' : 's'}',
+        if (result.skipped > 0)
+          'skipped ${result.skipped} duplicate${result.skipped == 1 ? '' : 's'}',
+      ];
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(parts.isEmpty ? 'Nothing to import' : parts.join(', ')),
+        ),
+      );
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('Import failed: $e')),
+      );
+    }
+  }
+
+  Future<void> _exportFavorites(BuildContext context, WidgetRef ref) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final favorites = ref.read(favoritesProvider);
+    if (favorites.isEmpty) return;
+    try {
+      final path = await FavoritesIoService().exportToFile(favorites);
+      if (path == null) return; // user cancelled
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+              'Exported ${favorites.length} station${favorites.length == 1 ? '' : 's'}'),
+        ),
+      );
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('Export failed: $e')),
+      );
+    }
   }
 
   void _showClearDialog(BuildContext context, WidgetRef ref) {

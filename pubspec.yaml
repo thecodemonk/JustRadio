@@ -67,6 +67,9 @@ dependencies:
   # Secure storage for session keys / API keys (Keychain / libsecret / DPAPI)
   flutter_secure_storage: ^10.0.0
 
+  # Native open/save dialogs for favorites import/export
+  file_picker: ^11.0.2
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

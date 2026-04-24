@@ -28,6 +28,14 @@ class FavoritesRepository {
     await _favoritesBox.put(station.stationuuid, station);
   }
 
+  Future<void> addAll(Iterable<RadioStation> stations) async {
+    final entries = {
+      for (final s in stations) s.stationuuid: s,
+    };
+    if (entries.isEmpty) return;
+    await _favoritesBox.putAll(entries);
+  }
+
   Future<void> remove(String stationUuid) async {
     await _favoritesBox.delete(stationUuid);
   }

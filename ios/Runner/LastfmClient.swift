@@ -1,4 +1,4 @@
-import CommonCrypto
+import CryptoKit
 import Foundation
 
 /// Native Last.fm client used when Flutter isn't active — CarPlay's
@@ -139,10 +139,7 @@ enum LastfmClient {
 
     private static func md5Hex(_ input: String) -> String {
         let data = input.data(using: .utf8) ?? Data()
-        var digest = [UInt8](repeating: 0, count: Int(CC_MD5_DIGEST_LENGTH))
-        data.withUnsafeBytes {
-            _ = CC_MD5($0.baseAddress, CC_LONG(data.count), &digest)
-        }
+        let digest = Insecure.MD5.hash(data: data)
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 

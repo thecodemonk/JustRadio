@@ -46,6 +46,28 @@ class FavoritesNotifier extends StateNotifier<List<RadioStation>> {
     await _repository.clear();
     _loadFavorites();
   }
+
+  /// Merge-import: skip stations already in favorites (by stationuuid).
+  /// Returns (added, skipped).
+  Future<({int added, int skipped})> importMerge(
+      List<RadioStation> stations) async {
+    final toAdd = <RadioStation>[];
+    var skipped = 0;
+    for (final s in stations) {
+      if (s.stationuuid.isEmpty) {
+        skipped++;
+        continue;
+      }
+      if (_repository.isFavorite(s.stationuuid)) {
+        skipped++;
+        continue;
+      }
+      toAdd.add(s);
+    }
+    await _repository.addAll(toAdd);
+    _loadFavorites();
+    return (added: toAdd.length, skipped: skipped);
+  }
 }
 
 // Helper provider to check if a specific station is favorite
