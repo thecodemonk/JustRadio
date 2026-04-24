@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -7,6 +8,7 @@ import 'data/models/album_art.dart';
 import 'data/models/genre_photo.dart';
 import 'data/models/radio_station.dart';
 import 'data/models/recent_play.dart';
+import 'core/constants/lastfm_config.dart';
 import 'data/services/audio_player_service.dart';
 import 'providers/album_art_provider.dart';
 import 'providers/audio_player_provider.dart';
@@ -73,6 +75,47 @@ Future<void> main() async {
   final albumArtRepo = container.read(albumArtRepositoryProvider);
   await albumArtRepo.init();
 
+  // One-shot purge of cached Last.fm album art URLs — the art provider
+  // chain dropped Last.fm because its coverage is spotty and several
+  // image URLs have been deprecated. Entries re-resolve on next play.
+  if (!appSettingsRepo.isMigrationDone('album_art_lastfm_purged_v1')) {
+    final removed = await albumArtRepo.purgeLastfmEntries();
+    await appSettingsRepo.markMigrationDone('album_art_lastfm_purged_v1');
+    if (kDebugMode) {
+      debugPrint('[albumart] purged $removed lastfm cache entries');
+    }
+  }
+
+  // One-shot purge of MusicBrainz-sourced entries — early MB+CAA lookups
+  // could cache compilation-album covers (e.g. "Rolling Stone Rare Trax
+  // Vol X" for an electronic single). The chain now skips compilations;
+  // clear so affected entries re-resolve.
+  if (!appSettingsRepo
+      .isMigrationDone('album_art_musicbrainz_compilation_purge_v1')) {
+    final removed = await albumArtRepo.purgeMusicbrainzEntries();
+    await appSettingsRepo
+        .markMigrationDone('album_art_musicbrainz_compilation_purge_v1');
+    if (kDebugMode) {
+      debugPrint('[albumart] purged $removed musicbrainz cache entries');
+    }
+  }
+
+  // One-shot purge of every cached entry — several chain-level fixes
+  // have gone in (artist/title swap acceptance, iTunes compilation
+  // filter) and we want every track to re-resolve with the latest
+  // matcher. Cheap: the Dart Hive cache is the only place; the network
+  // round-trip returns on next play.
+  if (!appSettingsRepo
+      .isMigrationDone('album_art_full_purge_v4_mb_title_only')) {
+    final removed = await albumArtRepo.purgeAll();
+    await appSettingsRepo
+        .markMigrationDone('album_art_full_purge_v4_mb_title_only');
+    if (kDebugMode) {
+      debugPrint(
+          '[albumart] purged $removed cache entries (post compilation-filter upgrade)');
+    }
+  }
+
   // Initialize Last.fm service
   final lastfmService = container.read(lastfmAuthServiceProvider);
   await lastfmService.init();
@@ -93,6 +136,34 @@ Future<void> main() async {
     container.listen<List<RecentPlay>>(
       recentPlaysProvider,
       (_, next) => audioService.syncRecent(next.map((r) => r.station).toList()),
+    );
+
+    // Native code (Android Auto custom love button, CarPlay likeCommand)
+    // needs the Last.fm credentials to sign its own requests when Flutter
+    // isn't running. The API key + secret ship in the app bundle regardless,
+    // so pushing them to SharedPreferences/UserDefaults is just the "one
+    // place native code reads from" convention. Session key + username are
+    // per-user and follow auth state.
+    audioService.syncLastfmConfig(
+      apiKey: LastfmConfig.apiKey,
+      apiSecret: LastfmConfig.sharedSecret,
+    );
+    audioService.syncLastfmSession(
+      sessionKey: lastfmService.sessionKey,
+      username: lastfmService.username,
+    );
+    container.listen(
+      lastfmStateProvider,
+      (prev, next) {
+        if (prev?.isAuthenticated == next.isAuthenticated &&
+            prev?.username == next.username) {
+          return;
+        }
+        audioService.syncLastfmSession(
+          sessionKey: lastfmService.sessionKey,
+          username: lastfmService.username,
+        );
+      },
     );
   }
 

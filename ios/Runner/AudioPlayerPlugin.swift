@@ -63,6 +63,21 @@ public class AudioPlayerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
     /// favicon while the current track has a resolved image.
     private var currentAlbumArtUrl: String?
     private var remoteCommandsConfigured = false
+    // Registered once in configureRemoteCommands; isActive + isEnabled are
+    // flipped as auth state + per-track loved state change.
+    private var likeCommandTarget: Any?
+    /// Tracks the last "artist|title" we resolved loved state for so the
+    /// same metadata burst doesn't refire track.getInfo repeatedly.
+    private var lastLoveCheckedKey: String = ""
+
+    // UserDefaults keys — mirrored by Dart via syncLastfmSession /
+    // syncLastfmConfig. Duplicated in LastfmClient's callers but kept here
+    // so there's one place to rename if needed.
+    private let kLastfmSession = "justradio.lastfm.session"
+    private let kLastfmUsername = "justradio.lastfm.username"
+    private let kLastfmApiKey = "justradio.lastfm.apiKey"
+    private let kLastfmApiSecret = "justradio.lastfm.apiSecret"
+    private let kLovedTracks = "justradio.lastfm.lovedTracks"
 
     /// Remembered volume (the logarithmic value Dart already applied). Each
     /// playStation spins up a fresh AVPlayer; without this we'd reset to
@@ -157,6 +172,38 @@ public class AudioPlayerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
             // the per-track album art while a resolved image is available.
             currentAlbumArtUrl = (url?.isEmpty ?? true) ? nil : url
             updateNowPlayingInfo()
+            result(nil)
+        case "syncLastfmSession":
+            let sessionKey = args?["sessionKey"] as? String ?? ""
+            let username = args?["username"] as? String ?? ""
+            UserDefaults.standard.set(sessionKey, forKey: kLastfmSession)
+            UserDefaults.standard.set(username, forKey: kLastfmUsername)
+            // Clear loved cache on logout so a subsequent login doesn't
+            // inherit the previous user's state.
+            if sessionKey.isEmpty {
+                UserDefaults.standard.removeObject(forKey: kLovedTracks)
+                lastLoveCheckedKey = ""
+            }
+            refreshLikeCommand()
+            // Re-resolve the current track against the new account.
+            if !sessionKey.isEmpty, let (a, t) = currentArtistTitle() {
+                resolveLovedState(artist: a, title: t)
+            }
+            result(nil)
+        case "syncLastfmConfig":
+            let apiKey = args?["apiKey"] as? String ?? ""
+            let apiSecret = args?["apiSecret"] as? String ?? ""
+            UserDefaults.standard.set(apiKey, forKey: kLastfmApiKey)
+            UserDefaults.standard.set(apiSecret, forKey: kLastfmApiSecret)
+            result(nil)
+        case "setLovedState":
+            let artist = args?["artist"] as? String ?? ""
+            let title = args?["title"] as? String ?? ""
+            let loved = args?["loved"] as? Bool ?? false
+            if !artist.isEmpty, !title.isEmpty {
+                setCachedLoved(artist: artist, title: title, loved: loved)
+                refreshLikeCommand()
+            }
             result(nil)
         default:
             result(FlutterMethodNotImplemented)
@@ -447,6 +494,7 @@ public class AudioPlayerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
             lastTrackTitle = title
         }
         updateNowPlayingInfo()
+        onTrackIdentityMaybeChanged()
         sendEvent([
             "type": "metadata",
             "identifier": "icy/StreamTitle",
@@ -495,7 +543,9 @@ public class AudioPlayerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
         lastTrackTitle = nil
         lastTrackArtist = nil
         currentAlbumArtUrl = nil
+        lastLoveCheckedKey = ""
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        refreshLikeCommand()
         sendEvent(["type": "state", "state": "stopped"])
     }
 
@@ -626,6 +676,152 @@ public class AudioPlayerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
         center.seekBackwardCommand.isEnabled = false
         center.nextTrackCommand.isEnabled = false
         center.previousTrackCommand.isEnabled = false
+
+        // Last.fm "love this track" — surfaces in CarPlay Now Playing when
+        // the user is linked to Last.fm. MPFeedbackCommandEvent.isNegative
+        // is true when the user is un-loving (filled heart -> outline).
+        // isActive reflects current loved state; isEnabled is gated on
+        // Last.fm auth and is flipped from refreshLikeCommand().
+        let likeCmd = center.likeCommand
+        likeCmd.localizedTitle = "Love"
+        likeCmd.localizedShortTitle = "Love"
+        likeCommandTarget = likeCmd.addTarget { [weak self] event in
+            guard let self = self else { return .commandFailed }
+            guard let feedback = event as? MPFeedbackCommandEvent else {
+                return .commandFailed
+            }
+            let wantLoved = !feedback.isNegative
+            self.toggleLoveCurrentTrack(wantLoved: wantLoved)
+            return .success
+        }
+        refreshLikeCommand()
+    }
+
+    // ------------------------------------------------------------------
+    // Last.fm love-track button
+    // ------------------------------------------------------------------
+
+    private func currentArtistTitle() -> (String, String)? {
+        guard let title = lastTrackTitle, !title.isEmpty,
+              let artist = lastTrackArtist, !artist.isEmpty
+        else { return nil }
+        return (artist, title)
+    }
+
+    private func currentCreds() -> LastfmClient.Creds? {
+        let apiKey = UserDefaults.standard.string(forKey: kLastfmApiKey) ?? ""
+        let apiSecret = UserDefaults.standard.string(forKey: kLastfmApiSecret) ?? ""
+        let sk = UserDefaults.standard.string(forKey: kLastfmSession) ?? ""
+        guard !apiKey.isEmpty, !apiSecret.isEmpty, !sk.isEmpty else { return nil }
+        return LastfmClient.Creds(apiKey: apiKey, apiSecret: apiSecret, sessionKey: sk)
+    }
+
+    private func lovedCache() -> [String: Bool] {
+        guard let data = UserDefaults.standard.data(forKey: kLovedTracks),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Bool]
+        else { return [:] }
+        return obj
+    }
+
+    private func setCachedLoved(artist: String, title: String, loved: Bool) {
+        var cache = lovedCache()
+        cache["\(artist)|\(title)"] = loved
+        if let data = try? JSONSerialization.data(withJSONObject: cache) {
+            UserDefaults.standard.set(data, forKey: kLovedTracks)
+        }
+    }
+
+    private func isCachedLoved(artist: String, title: String) -> Bool {
+        lovedCache()["\(artist)|\(title)"] ?? false
+    }
+
+    /// Reflect current auth + per-track loved state onto likeCommand. Call
+    /// after anything that changes either: auth changes, track identity
+    /// changes, or a successful love/unlove toggle.
+    private func refreshLikeCommand() {
+        let cmd = MPRemoteCommandCenter.shared().likeCommand
+        let authed = currentCreds() != nil
+        cmd.isEnabled = authed
+        if let (artist, title) = currentArtistTitle(), authed {
+            cmd.isActive = isCachedLoved(artist: artist, title: title)
+        } else {
+            cmd.isActive = false
+        }
+    }
+
+    /// Fire track.getInfo and update the cache + button. Idempotent with
+    /// Dart's parallel lookup when Flutter is running.
+    private func resolveLovedState(artist: String, title: String) {
+        let key = "\(artist)|\(title)"
+        if key == lastLoveCheckedKey { return }
+        lastLoveCheckedKey = key
+        guard let creds = currentCreds() else { return }
+        let username = UserDefaults.standard.string(forKey: kLastfmUsername) ?? ""
+        guard !username.isEmpty else { return }
+        LastfmClient.isTrackLoved(
+            artist: artist,
+            title: title,
+            username: username,
+            apiKey: creds.apiKey
+        ) { [weak self] loved in
+            guard let self = self else { return }
+            let prior = self.isCachedLoved(artist: artist, title: title)
+            if prior == loved { return }
+            self.setCachedLoved(artist: artist, title: title, loved: loved)
+            self.refreshLikeCommand()
+            self.sendEvent([
+                "type": "lovedStateChanged",
+                "artist": artist,
+                "title": title,
+                "loved": loved,
+            ])
+        }
+    }
+
+    /// Toggle loved state for the current track. Optimistic update then
+    /// HTTP; revert on failure.
+    private func toggleLoveCurrentTrack(wantLoved: Bool) {
+        guard let (artist, title) = currentArtistTitle() else { return }
+        guard let creds = currentCreds() else { return }
+        setCachedLoved(artist: artist, title: title, loved: wantLoved)
+        refreshLikeCommand()
+        sendEvent([
+            "type": "lovedStateChanged",
+            "artist": artist,
+            "title": title,
+            "loved": wantLoved,
+        ])
+        let completion: (Bool) -> Void = { [weak self] ok in
+            guard let self = self else { return }
+            if !ok {
+                self.setCachedLoved(artist: artist, title: title, loved: !wantLoved)
+                self.refreshLikeCommand()
+                self.sendEvent([
+                    "type": "lovedStateChanged",
+                    "artist": artist,
+                    "title": title,
+                    "loved": !wantLoved,
+                ])
+            }
+        }
+        if wantLoved {
+            LastfmClient.loveTrack(artist: artist, title: title, creds: creds,
+                                   completion: completion)
+        } else {
+            LastfmClient.unloveTrack(artist: artist, title: title, creds: creds,
+                                     completion: completion)
+        }
+    }
+
+    /// Called from places that change `lastTrackTitle` / `lastTrackArtist`
+    /// so the button + loved cache stay in sync. Both the ICY-title path
+    /// (applyIcyTitle) and the HLS ID3 path (emitMetadataItem) converge
+    /// here after they've updated the Now Playing metadata.
+    private func onTrackIdentityMaybeChanged() {
+        refreshLikeCommand()
+        if let (a, t) = currentArtistTitle() {
+            resolveLovedState(artist: a, title: t)
+        }
     }
 
     private func updateNowPlayingInfo(
@@ -764,7 +960,10 @@ public class AudioPlayerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
             lastTrackArtist = a
             nowPlayingDirty = true
         }
-        if nowPlayingDirty { updateNowPlayingInfo() }
+        if nowPlayingDirty {
+            updateNowPlayingInfo()
+            onTrackIdentityMaybeChanged()
+        }
 
         sendEvent([
             "type": "metadata",

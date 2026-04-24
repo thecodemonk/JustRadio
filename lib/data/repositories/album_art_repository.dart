@@ -36,4 +36,44 @@ class AlbumArtRepository {
   Future<void> clear() async {
     await _artBox.clear();
   }
+
+  /// One-shot migration: the album-art chain dropped Last.fm as a
+  /// provider. Old cached entries attributed to `lastfm` may carry URLs
+  /// that Last.fm has since deprecated. Remove them so the next lookup
+  /// re-resolves via iTunes/Deezer/MusicBrainz.
+  /// Returns the number of entries purged.
+  Future<int> purgeLastfmEntries() async {
+    return _purgeBySource({'lastfm'});
+  }
+
+  /// One-shot migration: early versions of the MusicBrainz+CAA lookup
+  /// would cache whatever release CAA had cover art for, including
+  /// compilation albums whose covers have nothing to do with the track.
+  /// Clear MB-sourced entries so they re-resolve under the new
+  /// compilation-skipping logic.
+  Future<int> purgeMusicbrainzEntries() async {
+    return _purgeBySource({'musicbrainz'});
+  }
+
+  /// One-shot migration: wipes every cached entry. Used after a chain-
+  /// level logic change (e.g. iTunes compilation filter, artist/title
+  /// swap acceptance) so all tracks re-resolve under the new matcher
+  /// on next play.
+  Future<int> purgeAll() async {
+    final count = _artBox.length;
+    await _artBox.clear();
+    return count;
+  }
+
+  Future<int> _purgeBySource(Set<String> sources) async {
+    final toDelete = <String>[];
+    for (final key in _artBox.keys) {
+      final art = _artBox.get(key);
+      if (art != null && sources.contains(art.source)) {
+        toDelete.add(key.toString());
+      }
+    }
+    await _artBox.deleteAll(toDelete);
+    return toDelete.length;
+  }
 }

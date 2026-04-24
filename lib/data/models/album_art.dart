@@ -11,9 +11,10 @@ class AlbumArt {
   /// Largest available image URL, or null if no source returned art.
   final String? imageUrl;
 
-  /// Which source supplied the image: "lastfm" | "itunes" | "none".
-  /// Used for attribution credits in settings and as a hint for fallback
-  /// ordering on future re-lookups.
+  /// Which source supplied the image: "itunes" | "deezer" | "musicbrainz"
+  /// | "none". Older cached entries may still carry "lastfm" until the
+  /// one-shot purge in main.dart clears them. Used for attribution
+  /// credits and as a hint for fallback ordering on future re-lookups.
   final String source;
 
   final DateTime fetchedAt;

@@ -112,6 +112,7 @@ class RadioPlayerController extends StateNotifier<RadioPlayerState> {
   StreamSubscription? _playbackStateSubscription;
   StreamSubscription? _stationSubscription;
   StreamSubscription? _nowPlayingSubscription;
+  StreamSubscription? _syncedAlbumArtSubscription;
   DateTime? _trackStartTime;
   NowPlaying? _lastScrobbledTrack;
 
@@ -154,11 +155,33 @@ class RadioPlayerController extends StateNotifier<RadioPlayerState> {
         clearAlbumArt: artChanged,
       );
 
+      // NowPlaying.empty() is the "fresh session" signal the service
+      // emits on playStation / stop. Drop the lookup dedupe cache here so
+      // restarting the same station mid-song re-resolves art instead of
+      // short-circuiting on a stale _lastArtLookupKey match.
+      if (nowPlaying.isEmpty) {
+        _lastArtLookupKey = null;
+        _albumArtDebounce?.cancel();
+      }
+
       // Handle Last.fm integration + album art lookup
       if (nowPlaying.isNotEmpty && artChanged) {
         _handleTrackChange(nowPlaying, previousNowPlaying);
         _scheduleAlbumArtLookup(nowPlaying);
       }
+    });
+
+    // Native side may hand us an already-resolved art URL (syncState
+    // after AA cold start, or a cached hit in native's SharedPreferences
+    // cache that arrived before Dart's chain). Mirror into state and
+    // mark it as already-looked-up so we don't redundantly fire the
+    // Dart chain for the same track.
+    _syncedAlbumArtSubscription =
+        _playerService.syncedAlbumArtStream.listen((url) {
+      if (url.isEmpty) return;
+      if (state.albumArtUrl == url) return;
+      state = state.copyWith(albumArtUrl: url);
+      _lastArtLookupKey = state.nowPlaying;
     });
   }
 
@@ -187,7 +210,10 @@ class RadioPlayerController extends StateNotifier<RadioPlayerState> {
       );
     }
     _albumArtDebounce?.cancel();
-    _albumArtDebounce = Timer(const Duration(milliseconds: 500), () {
+    // 250ms is enough to swallow the HLS metadata burst (TIT2 + TPE1
+    // typically land within 50-100ms of each other) while not adding
+    // noticeable latency to the art swap.
+    _albumArtDebounce = Timer(const Duration(milliseconds: 250), () {
       _runAlbumArtLookup(nowPlaying);
     });
   }
@@ -329,6 +355,7 @@ class RadioPlayerController extends StateNotifier<RadioPlayerState> {
     _playbackStateSubscription?.cancel();
     _stationSubscription?.cancel();
     _nowPlayingSubscription?.cancel();
+    _syncedAlbumArtSubscription?.cancel();
     _albumArtDebounce?.cancel();
     super.dispose();
   }

@@ -9,6 +9,8 @@ import '../../core/widgets/waveform.dart';
 import '../../data/models/radio_station.dart';
 import '../../providers/audio_player_provider.dart';
 import '../../providers/favorites_provider.dart';
+import '../../providers/lastfm_provider.dart';
+import '../../providers/loved_track_provider.dart';
 import '../favorites/favorites_screen.dart';
 import '../home/home_screen.dart';
 import '../search/search_screen.dart';
@@ -366,7 +368,23 @@ class _NowPlayingMain extends ConsumerWidget {
     }
 
     final np = playerState.nowPlaying;
-    return Padding(
+    final displayTitle = np.title.isNotEmpty ? np.title : station.name;
+    return Stack(
+      // StackFit.expand forces the Stack to claim the full available
+      // height the parent offers, so the album-art backdrop fills the
+      // whole pane instead of only the vertical extent of the content
+      // Column. Without this the bottom below the waveform shows
+      // through to the shell's station-hue gradient with a hard edge.
+      fit: StackFit.expand,
+      children: [
+        // Local album-art backdrop — only shows in the Now Playing
+        // content area. The shell's own AmbientBg keeps the sidebar /
+        // right panel on the station-hue gradient.
+        AmbientBg(
+          station: station,
+          albumArtUrl: playerState.albumArtUrl,
+        ),
+        Padding(
       padding: const EdgeInsets.fromLTRB(40, 48, 40, 32),
       child: SingleChildScrollView(
         child: Column(
@@ -397,6 +415,8 @@ class _NowPlayingMain extends ConsumerWidget {
               '${station.name}${station.country.isNotEmpty ? ' · ${station.country}' : ''}${station.bitrate > 0 ? ' · ${station.bitrate} kbps' : ''}',
               style: AppTypography.body(13,
                   color: AppColors.onBgMuted(0.7)),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
             const SizedBox(height: 28),
             Row(
@@ -426,17 +446,21 @@ class _NowPlayingMain extends ConsumerWidget {
                           )),
                       const SizedBox(height: 10),
                       Text(
-                        np.title.isNotEmpty ? np.title : station.name,
+                        displayTitle,
                         style: AppTypography.display(60, height: 1.0),
                         maxLines: 3,
                         overflow: TextOverflow.ellipsis,
                       ),
                       if (np.artist.isNotEmpty) ...[
                         const SizedBox(height: 12),
-                        Text(np.artist,
-                            style: AppTypography.body(20,
-                                color: AppColors.onBgMuted(0.85),
-                                weight: FontWeight.w300)),
+                        Text(
+                          np.artist,
+                          style: AppTypography.body(20,
+                              color: AppColors.onBgMuted(0.85),
+                              weight: FontWeight.w300),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ],
                     ],
                   ),
@@ -491,6 +515,8 @@ class _NowPlayingMain extends ConsumerWidget {
           ],
         ),
       ),
+        ),
+      ],
     );
   }
 }
@@ -710,7 +736,7 @@ class _DesktopPlayerBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final playerState = ref.watch(radioPlayerControllerProvider);
     final volume = ref.watch(volumeProvider);
-    final isFavorite = ref.watch(isFavoriteProvider(station.stationuuid));
+    final isAuthed = ref.watch(lastfmStateProvider).isAuthenticated;
     final np = playerState.nowPlaying;
 
     return ClipRect(
@@ -763,19 +789,7 @@ class _DesktopPlayerBar extends StatelessWidget {
                         ],
                       ),
                     ),
-                    IconButton(
-                      tooltip: isFavorite ? 'Unfavorite' : 'Favorite',
-                      icon: Icon(
-                        isFavorite ? Icons.favorite : Icons.favorite_border,
-                        color: isFavorite
-                            ? AppColors.accent
-                            : AppColors.onBgMuted(0.5),
-                        size: 18,
-                      ),
-                      onPressed: () => ref
-                          .read(favoritesProvider.notifier)
-                          .toggle(station),
-                    ),
+                    if (isAuthed) const _LovePlayerBarButton(),
                   ],
                 ),
               ),
@@ -869,6 +883,29 @@ class _DesktopPlayerBar extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _LovePlayerBarButton extends ConsumerWidget {
+  const _LovePlayerBarButton();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final state = ref.watch(lovedTrackProvider);
+    final canTap = state.hasTrack && !state.isBusy;
+    return IconButton(
+      tooltip: state.isLoved ? 'Unlove on Last.fm' : 'Love on Last.fm',
+      icon: Icon(
+        state.isLoved ? Icons.favorite : Icons.favorite_border,
+        color: state.isLoved
+            ? AppColors.accent
+            : AppColors.onBgMuted(canTap ? 0.5 : 0.25),
+        size: 18,
+      ),
+      onPressed: canTap
+          ? () => ref.read(lovedTrackProvider.notifier).toggleLove()
+          : null,
     );
   }
 }

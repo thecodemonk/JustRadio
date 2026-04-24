@@ -19,9 +19,22 @@ class ApiConstants {
   static const tags = '/json/tags';
   static const stationClick = '/json/url'; // Register click on station
 
-  // Last.fm API
+  // Last.fm API (scrobble / love / user info only — album art no longer
+  // uses Last.fm after the iTunes → Deezer → MB+CAA migration).
   static const lastfmBaseUrl = 'https://ws.audioscrobbler.com/2.0/';
   static const lastfmAuthUrl = 'https://www.last.fm/api/auth/';
+
+  // Album art provider chain — order matters.
+  static const itunesBaseUrl = 'https://itunes.apple.com';
+  static const deezerBaseUrl = 'https://api.deezer.com';
+  static const musicbrainzBaseUrl = 'https://musicbrainz.org';
+  static const coverArtArchiveBaseUrl = 'https://coverartarchive.org';
+
+  // MusicBrainz requires a User-Agent identifying the app + a contact
+  // method. Update the URL if the repo moves. MusicBrainz will throttle
+  // (or block) generic User-Agent strings more aggressively.
+  static const musicbrainzUserAgent =
+      'JustRadio/1.0 ( https://github.com/thecodemonk/JustRadio )';
 
   // Default limits
   static const defaultSearchLimit = 50;

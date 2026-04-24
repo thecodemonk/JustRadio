@@ -42,12 +42,36 @@ class IcyDebugInfo {
       (streamName == null || streamName!.isEmpty);
 }
 
+/// Fired when the native side (Android Auto's love button, CarPlay's
+/// likeCommand) toggles a track's loved state. The Flutter provider
+/// merges this into its own state so the heart icon matches.
+class LovedStateEvent {
+  final String artist;
+  final String title;
+  final bool loved;
+
+  const LovedStateEvent({
+    required this.artist,
+    required this.title,
+    required this.loved,
+  });
+}
+
 abstract class AudioPlayerService {
   Stream<NowPlaying> get nowPlayingStream;
   Stream<RadioStation?> get stationStream;
   Stream<PlaybackState> get playbackStateStream;
   Stream<bool> get playingStream;
   Stream<IcyDebugInfo> get icyDebugStream;
+
+  /// Emits when native code changes the loved state — e.g. the driver
+  /// tapped the love button on Android Auto. Desktop engines never emit.
+  Stream<LovedStateEvent> get lovedStateStream => const Stream.empty();
+
+  /// Emits when the native session hands us an already-resolved album
+  /// art URL (e.g. after AA started playback before Flutter opened).
+  /// The phone UI uses this to skip a redundant Dart-side lookup.
+  Stream<String> get syncedAlbumArtStream => const Stream.empty();
 
   RadioStation? get currentStation;
   bool get isPlaying;
@@ -75,6 +99,25 @@ abstract class AudioPlayerService {
   /// no-op on desktop (media_kit doesn't need this — album art flows
   /// through the Flutter UI directly).
   Future<void> setAlbumArt(String? url) async {}
+
+  /// Mirror the Last.fm session key + username into native storage so the
+  /// Android MediaSession / iOS remote-command handler can sign Last.fm
+  /// requests when the Flutter activity isn't running. Pass null to clear.
+  Future<void> syncLastfmSession({String? sessionKey, String? username}) async {}
+
+  /// Mirror the Last.fm API credentials into native storage. Called once
+  /// at startup — the values ship with the app regardless, so this is
+  /// just a convenience for native code to read them from one place.
+  Future<void> syncLastfmConfig(
+      {required String apiKey, required String apiSecret}) async {}
+
+  /// Tell the native side that Dart just resolved the loved state for a
+  /// track, so the AA/CarPlay button can match without a duplicate HTTP
+  /// lookup. The native side caches by "artist|title".
+  Future<void> setLovedState(
+      {required String artist,
+      required String title,
+      required bool loved}) async {}
 
   static Future<void> init() async {
     MediaKit.ensureInitialized();

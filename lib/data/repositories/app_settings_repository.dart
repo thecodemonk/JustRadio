@@ -59,4 +59,18 @@ class AppSettingsRepository {
   Future<void> setVolume(double volume) async {
     await _box?.put(_volumeKey, volume.clamp(0.0, 1.0));
   }
+
+  // ------------------------------------------------------------------
+  // One-shot migration flags — for code that needs to run exactly once
+  // per install (schema migrations, cache purges after a provider swap).
+  // Name the key semantically + versioned so we can re-run a new
+  // migration without disturbing prior ones.
+  // ------------------------------------------------------------------
+
+  bool isMigrationDone(String name) =>
+      _box?.get('migration.$name') == true;
+
+  Future<void> markMigrationDone(String name) async {
+    await _box?.put('migration.$name', true);
+  }
 }

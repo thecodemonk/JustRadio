@@ -4,13 +4,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/ambient_bg.dart';
+import '../../core/widgets/full_title_dialog.dart';
+import '../../core/widgets/marquee_text.dart';
 import '../../core/widgets/sleep_timer_panel.dart';
 import '../../core/widgets/station_art.dart';
 import '../../core/widgets/waveform.dart';
 import '../../data/models/radio_station.dart';
 import '../../providers/audio_player_provider.dart';
-import '../../providers/favorites_provider.dart';
 import '../../providers/lastfm_provider.dart';
+import '../../providers/loved_track_provider.dart';
 import '../../providers/sleep_timer_provider.dart';
 
 class PlayerScreen extends ConsumerStatefulWidget {
@@ -23,9 +25,6 @@ class PlayerScreen extends ConsumerStatefulWidget {
 }
 
 class _PlayerScreenState extends ConsumerState<PlayerScreen> {
-  String? _lovedTrackKey;
-  bool _isLoved = false;
-  bool _isLoveBusy = false;
   DateTime? _listenStart;
 
   @override
@@ -40,98 +39,13 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
         ref
             .read(radioPlayerControllerProvider.notifier)
             .playStation(widget.station);
-      } else {
-        // Same station is already playing — sync loved state for whatever
-        // track is already on air, since our ref.listen only fires on
-        // subsequent changes.
-        final isAuthed = ref.read(lastfmStateProvider).isAuthenticated;
-        final np = playerState.nowPlaying;
-        if (isAuthed && np.artist.isNotEmpty && np.title.isNotEmpty) {
-          _syncLovedState(np.artist, np.title);
-        }
       }
     });
-  }
-
-  String _trackKey(String artist, String title) => '$artist|$title';
-
-  Future<void> _syncLovedState(String artist, String title) async {
-    final key = _trackKey(artist, title);
-    if (_lovedTrackKey == key) return;
-
-    final lastfmService = ref.read(lastfmAuthServiceProvider);
-    final username = ref.read(lastfmStateProvider).username;
-    if (!lastfmService.isAuthenticated || username == null) {
-      setState(() {
-        _lovedTrackKey = key;
-        _isLoved = false;
-      });
-      return;
-    }
-
-    setState(() {
-      _lovedTrackKey = key;
-      _isLoved = false;
-    });
-
-    final loved = await lastfmService.repository.isTrackLoved(
-      artist: artist,
-      track: title,
-      username: username,
-    );
-    if (!mounted || _lovedTrackKey != key) return;
-    setState(() => _isLoved = loved);
-  }
-
-  Future<void> _toggleLove(String artist, String title) async {
-    if (_isLoveBusy) return;
-    final lastfmService = ref.read(lastfmAuthServiceProvider);
-    if (!lastfmService.isAuthenticated) return;
-
-    final wantLoved = !_isLoved;
-    setState(() {
-      _isLoveBusy = true;
-      _isLoved = wantLoved;
-    });
-
-    final success = wantLoved
-        ? await lastfmService.repository.loveTrack(
-            artist: artist, track: title)
-        : await lastfmService.repository.unloveTrack(
-            artist: artist, track: title);
-
-    if (!mounted) return;
-    setState(() {
-      _isLoveBusy = false;
-      if (!success) _isLoved = !wantLoved;
-    });
-
-    if (!success) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            wantLoved
-                ? 'Failed to love track on Last.fm'
-                : 'Failed to unlove track on Last.fm',
-          ),
-        ),
-      );
-    }
   }
 
   @override
   Widget build(BuildContext context) {
-    ref.listen<RadioPlayerState>(radioPlayerControllerProvider, (prev, next) {
-      final isAuthed = ref.read(lastfmStateProvider).isAuthenticated;
-      final artist = next.nowPlaying.artist;
-      final title = next.nowPlaying.title;
-      if (isAuthed && artist.isNotEmpty && title.isNotEmpty) {
-        _syncLovedState(artist, title);
-      }
-    });
-
     final playerState = ref.watch(radioPlayerControllerProvider);
-    final isFavorite = ref.watch(isFavoriteProvider(widget.station.stationuuid));
     final station = widget.station;
 
     final artist = playerState.nowPlaying.artist;
@@ -154,82 +68,117 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
         ),
         actions: [
           _SleepTimerAction(),
-          IconButton(
-            tooltip: isFavorite ? 'Remove favorite' : 'Add favorite',
-            icon: Icon(
-              isFavorite ? Icons.favorite : Icons.favorite_border,
-              color: isFavorite ? AppColors.accent : AppColors.onBgMuted(0.7),
-            ),
-            onPressed: () {
-              ref.read(favoritesProvider.notifier).toggle(station);
-            },
-          ),
+          if (isAuthed) const _LoveTrackAction(),
         ],
       ),
       body: Stack(
         children: [
-          Positioned.fill(child: AmbientBg(station: station)),
+          Positioned.fill(
+            child: AmbientBg(
+              station: station,
+              albumArtUrl: playerState.albumArtUrl,
+            ),
+          ),
           SafeArea(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(24, 8, 24, 140),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _LiveBreadcrumb(station: station),
-                  const SizedBox(height: 32),
-                  Center(
-                    child: NowPlayingArt(
-                      station: station,
-                      albumArtUrl: playerState.albumArtUrl,
-                      size: 260,
-                      radius: 8,
-                      shadow: BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.5),
-                        blurRadius: 60,
-                        offset: const Offset(0, 20),
+            child: LayoutBuilder(builder: (context, constraints) {
+              // Three size tiers keep the single-viewport layout working on
+              // compact phones (<560), regular phones (<700), and anything
+              // larger. The art shrinks and the waveform drops out when we
+              // have to.
+              final h = constraints.maxHeight;
+              final tight = h < 560;
+              final artSize = tight ? 180.0 : (h < 700 ? 200.0 : 260.0);
+              final showWaveform = !tight;
+              final breadcrumbGap = h < 700 ? 18.0 : 32.0;
+              final metaGap = h < 700 ? 20.0 : 36.0;
+              final panelGap = h < 700 ? 18.0 : 32.0;
+
+              return Padding(
+                padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _LiveBreadcrumb(station: station),
+                    SizedBox(height: breadcrumbGap),
+                    Center(
+                      child: NowPlayingArt(
+                        station: station,
+                        albumArtUrl: playerState.albumArtUrl,
+                        size: artSize,
+                        radius: 8,
+                        shadow: BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.5),
+                          blurRadius: 60,
+                          offset: const Offset(0, 20),
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 36),
-                  _TrackMeta(
-                    artist: artist,
-                    title: title,
-                    stationName: station.name,
-                    isAuthed: isAuthed,
-                    isLoved: _isLoved,
-                    isLoveBusy: _isLoveBusy,
-                    onToggleLove: artist.isNotEmpty && title.isNotEmpty
-                        ? () => _toggleLove(artist, title)
-                        : null,
-                  ),
-                  const SizedBox(height: 32),
-                  _LiveWaveformPanel(
-                    station: station,
-                    playing: playerState.isPlaying,
-                    listenStart: _listenStart,
-                  ),
-                  if (playerState.error != null) ...[
-                    const SizedBox(height: 20),
-                    _ErrorBanner(message: playerState.error!),
+                    SizedBox(height: metaGap),
+                    _TrackMeta(
+                      artist: artist,
+                      title: title,
+                      stationName: station.name,
+                      isAuthed: isAuthed,
+                    ),
+                    if (showWaveform) ...[
+                      SizedBox(height: panelGap),
+                      _LiveWaveformPanel(
+                        station: station,
+                        playing: playerState.isPlaying,
+                        listenStart: _listenStart,
+                      ),
+                    ],
+                    if (playerState.error != null) ...[
+                      const SizedBox(height: 20),
+                      _ErrorBanner(message: playerState.error!),
+                    ],
+                    // Controls stay pinned at the bottom. All text
+                    // above is single-line (marquee handles overflow)
+                    // so the fixed-height total always fits the
+                    // tiered viewport budget — no scrolling needed.
+                    const Flexible(child: SizedBox.expand()),
+                    _PlayerControls(
+                      isPlaying: playerState.isPlaying,
+                      isLoading: playerState.isLoading,
+                      onTogglePlay: () => ref
+                          .read(radioPlayerControllerProvider.notifier)
+                          .togglePlayPause(),
+                      onStop: () {
+                        ref
+                            .read(radioPlayerControllerProvider.notifier)
+                            .stop();
+                        Navigator.of(context).pop();
+                      },
+                    ),
                   ],
-                  const SizedBox(height: 28),
-                  _PlayerControls(
-                    isPlaying: playerState.isPlaying,
-                    isLoading: playerState.isLoading,
-                    onTogglePlay: () => ref
-                        .read(radioPlayerControllerProvider.notifier)
-                        .togglePlayPause(),
-                    onStop: () {
-                      ref.read(radioPlayerControllerProvider.notifier).stop();
-                      Navigator.of(context).pop();
-                    },
-                  ),
-                ],
-              ),
-            ),
+                ),
+              );
+            }),
           ),
         ],
       ),
+    );
+  }
+}
+
+class _LoveTrackAction extends ConsumerWidget {
+  const _LoveTrackAction();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final state = ref.watch(lovedTrackProvider);
+    final canTap = state.hasTrack && !state.isBusy;
+    return IconButton(
+      tooltip: state.isLoved ? 'Unlove on Last.fm' : 'Love on Last.fm',
+      icon: Icon(
+        state.isLoved ? Icons.favorite : Icons.favorite_border,
+        color: state.isLoved
+            ? AppColors.accent
+            : AppColors.onBgMuted(canTap ? 0.7 : 0.3),
+      ),
+      onPressed: canTap
+          ? () => ref.read(lovedTrackProvider.notifier).toggleLove()
+          : null,
     );
   }
 }
@@ -266,6 +215,12 @@ class _LiveBreadcrumb extends StatelessWidget {
           parts.join(' · '),
           style: AppTypography.body(13,
               color: AppColors.onBgMuted(0.7)),
+          // Station identifiers can be long (e.g.
+          // "Deutschlandfunk | DLF | MP3 128k · Germany · 128 kbps").
+          // Wrapping to a second line eats vertical budget reserved
+          // for the playback controls, so ellipsize instead.
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
         ),
       ],
     );
@@ -324,18 +279,12 @@ class _TrackMeta extends StatelessWidget {
   final String title;
   final String stationName;
   final bool isAuthed;
-  final bool isLoved;
-  final bool isLoveBusy;
-  final VoidCallback? onToggleLove;
 
   const _TrackMeta({
     required this.artist,
     required this.title,
     required this.stationName,
     required this.isAuthed,
-    required this.isLoved,
-    required this.isLoveBusy,
-    required this.onToggleLove,
   });
 
   @override
@@ -352,14 +301,26 @@ class _TrackMeta extends StatelessWidget {
         ),
         const SizedBox(height: 10),
         if (!hasTrack)
-          Text(
-            stationName,
+          MarqueeText(
+            text: stationName,
             style: AppTypography.display(40),
           )
         else ...[
-          Text(
-            title.isEmpty ? stationName : title,
-            style: AppTypography.display(42),
+          // Single-line title with a smooth marquee when it overflows.
+          // Tap to open a dismissible card with the full text — matches
+          // the Spotify/Apple-Music convention for long titles.
+          Builder(
+            builder: (ctx) {
+              final displayTitle = title.isEmpty ? stationName : title;
+              return GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => showFullTitle(ctx, displayTitle),
+                child: MarqueeText(
+                  text: displayTitle,
+                  style: AppTypography.display(42),
+                ),
+              );
+            },
           ),
           if (artist.isNotEmpty) ...[
             const SizedBox(height: 10),
@@ -367,60 +328,27 @@ class _TrackMeta extends StatelessWidget {
               artist,
               style: AppTypography.body(18,
                   color: AppColors.onBgMuted(0.85), weight: FontWeight.w300),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
           ],
         ],
         if (isAuthed) ...[
           const SizedBox(height: 18),
-          Row(
-            children: [
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: AppColors.scrobble.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(3),
-                  border: Border.all(
-                    color: AppColors.scrobble.withValues(alpha: 0.3),
-                  ),
-                ),
-                child: Text(
-                  '● SCROBBLING TO LAST.FM',
-                  style: AppTypography.mono(9,
-                      color: AppColors.scrobble, letterSpacing: 1),
-                ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: AppColors.scrobble.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(3),
+              border: Border.all(
+                color: AppColors.scrobble.withValues(alpha: 0.3),
               ),
-              const Spacer(),
-              if (onToggleLove != null)
-                InkWell(
-                  onTap: isLoveBusy ? null : onToggleLove,
-                  borderRadius: BorderRadius.circular(6),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 4),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          isLoved ? Icons.favorite : Icons.favorite_border,
-                          size: 14,
-                          color: isLoved
-                              ? AppColors.accent
-                              : AppColors.onBgMuted(0.55),
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          isLoved ? 'Loved' : 'Love',
-                          style: AppTypography.body(11,
-                              color: isLoved
-                                  ? AppColors.accent
-                                  : AppColors.onBgMuted(0.55)),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-            ],
+            ),
+            child: Text(
+              '● SCROBBLING TO LAST.FM',
+              style: AppTypography.mono(9,
+                  color: AppColors.scrobble, letterSpacing: 1),
+            ),
           ),
         ],
       ],
@@ -822,3 +750,4 @@ class _ErrorBanner extends StatelessWidget {
     );
   }
 }
+

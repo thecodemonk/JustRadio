@@ -29,6 +29,12 @@ class NativeAudioPlayerService extends AudioPlayerService {
   final _playbackStateController = StreamController<PlaybackState>.broadcast();
   final _playingController = StreamController<bool>.broadcast();
   final _icyDebugController = StreamController<IcyDebugInfo>.broadcast();
+  final _lovedStateController = StreamController<LovedStateEvent>.broadcast();
+  // Emitted when the native MediaSession hands us an already-resolved
+  // album art URL (e.g. on syncState after Android Auto cold start).
+  // RadioPlayerController listens and mirrors into state.albumArtUrl
+  // so the phone UI paints without re-running the Dart chain.
+  final _syncedAlbumArtController = StreamController<String>.broadcast();
 
   StreamSubscription? _eventSubscription;
   bool _isPlaying = false;
@@ -57,6 +63,17 @@ class NativeAudioPlayerService extends AudioPlayerService {
         _eventSubscription = _eventChannel
             .receiveBroadcastStream()
             .listen(_handleEvent, onError: _handleError);
+        // Ask the native side to emit its current state. Needed when the
+        // MediaSession has been running (e.g. Android Auto cold start),
+        // because the auto-emit on MediaController.connect may fire
+        // before we finish subscribing — events with a null eventSink
+        // get dropped. This pull happens *after* onListen attaches the
+        // sink, so delivery is guaranteed.
+        try {
+          await _methodChannel.invokeMethod('requestSync');
+        } catch (_) {
+          // iOS plugin doesn't implement this yet — harmless.
+        }
         return;
       } on MissingPluginException {
         await Future.delayed(const Duration(milliseconds: 100));
@@ -83,6 +100,10 @@ class NativeAudioPlayerService extends AudioPlayerService {
   Stream<bool> get playingStream => _playingController.stream;
   @override
   Stream<IcyDebugInfo> get icyDebugStream => _icyDebugController.stream;
+  @override
+  Stream<LovedStateEvent> get lovedStateStream => _lovedStateController.stream;
+  @override
+  Stream<String> get syncedAlbumArtStream => _syncedAlbumArtController.stream;
 
   @override
   bool get isPlaying => _isPlaying;
@@ -102,7 +123,82 @@ class NativeAudioPlayerService extends AudioPlayerService {
           debugPrint('[native/debug] ${event['message']}');
         }
         break;
+      case 'lovedStateChanged':
+        final artist = event['artist'] as String?;
+        final title = event['title'] as String?;
+        final loved = event['loved'];
+        if (artist != null && title != null && loved is bool) {
+          _lovedStateController
+              .add(LovedStateEvent(artist: artist, title: title, loved: loved));
+        }
+        break;
+      case 'syncState':
+        _onSyncState(event);
+        break;
     }
+  }
+
+  /// Snapshot of what the native MediaSession is already doing — emitted
+  /// by the Android plugin on MediaController connect when Android Auto
+  /// has started playback before the Flutter activity opened. Without
+  /// this event, Dart listens for *changes* on the event channel and
+  /// never learns about the current station that's been playing.
+  void _onSyncState(Map event) {
+    final stationMap = event['station'];
+    if (stationMap is! Map) return;
+    final station = RadioStation(
+      stationuuid: stationMap['stationuuid'] as String? ?? '',
+      name: stationMap['name'] as String? ?? '',
+      // Native ships the resolved stream URL as `streamUrl`; RadioStation
+      // stores it under `url`.
+      url: stationMap['streamUrl'] as String? ?? '',
+      favicon: stationMap['favicon'] as String? ?? '',
+      tags: stationMap['tags'] as String? ?? '',
+      bitrate: _asInt(stationMap['bitrate']) ?? 0,
+      codec: stationMap['codec'] as String? ?? '',
+    );
+    _currentStation = station;
+    _stationController.add(station);
+
+    final title = (event['title'] as String? ?? '').trim();
+    final artist = (event['artist'] as String? ?? '').trim();
+    final albumArtUrl = (event['albumArtUrl'] as String? ?? '').trim();
+    if (title.isNotEmpty || artist.isNotEmpty) {
+      _lastTitle = title.isEmpty ? null : title;
+      _lastArtist = artist.isEmpty ? null : artist;
+      _nowPlayingController.add(NowPlaying(
+        title: title,
+        artist: artist,
+        rawMetadata: artist.isEmpty ? title : '$artist - $title',
+      ));
+    }
+    // Album art the session already resolved via the native chain —
+    // hand it directly to the controller so the phone UI doesn't have
+    // to re-run the Dart chain just to paint. Accepted via a stream
+    // that RadioPlayerController listens for (added alongside this).
+    if (albumArtUrl.isNotEmpty) {
+      _syncedAlbumArtController.add(albumArtUrl);
+    }
+
+    final isPlaying = event['isPlaying'];
+    if (isPlaying is bool) {
+      _isPlaying = isPlaying;
+      _playingController.add(isPlaying);
+      _playbackStateController
+          .add(isPlaying ? PlaybackState.playing : PlaybackState.paused);
+    }
+
+    if (kDebugMode) {
+      debugPrint(
+          '[native] syncState: station="${station.name}" artist="$artist" title="$title" playing=$isPlaying');
+    }
+  }
+
+  static int? _asInt(dynamic v) {
+    if (v is int) return v;
+    if (v is num) return v.toInt();
+    if (v is String) return int.tryParse(v);
+    return null;
   }
 
   void _handleError(Object err) {
@@ -359,6 +455,36 @@ class NativeAudioPlayerService extends AudioPlayerService {
     await _tryInvoke('setAlbumArt', {'url': url ?? ''});
   }
 
+  @override
+  Future<void> syncLastfmSession(
+      {String? sessionKey, String? username}) async {
+    await _tryInvoke('syncLastfmSession', {
+      'sessionKey': sessionKey ?? '',
+      'username': username ?? '',
+    });
+  }
+
+  @override
+  Future<void> syncLastfmConfig(
+      {required String apiKey, required String apiSecret}) async {
+    await _tryInvoke('syncLastfmConfig', {
+      'apiKey': apiKey,
+      'apiSecret': apiSecret,
+    });
+  }
+
+  @override
+  Future<void> setLovedState(
+      {required String artist,
+      required String title,
+      required bool loved}) async {
+    await _tryInvoke('setLovedState', {
+      'artist': artist,
+      'title': title,
+      'loved': loved,
+    });
+  }
+
   Map<String, dynamic> _stationToMap(RadioStation s) => {
         'stationuuid': s.stationuuid,
         'name': s.name,
@@ -386,6 +512,8 @@ class NativeAudioPlayerService extends AudioPlayerService {
     await _playbackStateController.close();
     await _playingController.close();
     await _icyDebugController.close();
+    await _lovedStateController.close();
+    await _syncedAlbumArtController.close();
     try {
       await _methodChannel.invokeMethod('stop');
     } catch (_) {}

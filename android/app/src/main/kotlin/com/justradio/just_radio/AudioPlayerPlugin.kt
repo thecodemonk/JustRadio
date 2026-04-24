@@ -39,6 +39,17 @@ class AudioPlayerPlugin :
 
     companion object {
         private const val TAG = "AudioPlayerPlugin"
+
+        /**
+         * Tracks whether a Flutter engine is currently attached to this
+         * plugin. Read by PlaybackService to decide whether native
+         * scrobbling (+ updateNowPlaying) should fire — when Dart is
+         * running, it handles those from RadioPlayerController via its
+         * own nowPlayingStream listener, and we'd otherwise double up.
+         * Volatile so reads across threads see the latest write.
+         */
+        @Volatile
+        var isFlutterAttached: Boolean = false
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -57,6 +68,7 @@ class AudioPlayerPlugin :
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         Log.d(TAG, "onAttachedToEngine")
+        isFlutterAttached = true
         val ctx = binding.applicationContext
         context = ctx
         methodChannel = MethodChannel(binding.binaryMessenger, "justradio/audio")
@@ -90,6 +102,13 @@ class AudioPlayerPlugin :
                     // usually ready.
                     c.volume = lastVolume.coerceIn(0f, 1f)
                     Log.d(TAG, "MediaController connected")
+                    // If Android Auto started the service cold, there's
+                    // already a media item + state in the session. Dart
+                    // subscribes to `Player.Listener` events via the
+                    // controller, but those only fire on *changes* — not
+                    // the current snapshot. Sync the current state so the
+                    // UI matches what's actually playing.
+                    emitSyncStateIfPlaying(c)
                 } catch (t: Throwable) {
                     Log.e(TAG, "MediaController connect failed", t)
                 }
@@ -98,8 +117,110 @@ class AudioPlayerPlugin :
         )
     }
 
+    /// Snapshot the controller's currently-playing station (if any) and
+    /// push it to Dart via a "syncState" event. Dart's handler rebuilds
+    /// the RadioStation from the station JSON cached in SharedPreferences
+    /// by previous `syncFavorites`/`syncRecent`/`syncGenreStations` calls.
+    /// Without this, opening JustRadio on the phone while AA has been
+    /// playing a station shows a blank player.
+    private fun emitSyncStateIfPlaying(c: MediaController) {
+        val item = c.currentMediaItem
+        if (item == null) {
+            Log.d(TAG, "syncState: currentMediaItem is null (nothing playing)")
+            return
+        }
+        val mediaId = item.mediaId
+        Log.d(TAG, "syncState: currentMediaItem mediaId=$mediaId isPlaying=${c.isPlaying}")
+        if (!mediaId.startsWith(PlaybackService.STATION_PREFIX)) {
+            Log.d(TAG, "syncState: skipping, not a station: $mediaId")
+            return
+        }
+        val ctx = context ?: run {
+            Log.d(TAG, "syncState: context null")
+            return
+        }
+        val stationJson = findStationJson(ctx, mediaId) ?: run {
+            Log.d(TAG, "syncState: no station JSON cached for $mediaId")
+            return
+        }
+        val md = item.mediaMetadata
+        val artworkUri = md.artworkUri?.toString().orEmpty()
+        val title = md.title?.toString().orEmpty()
+        val artist = md.artist?.toString().orEmpty()
+        val album = md.albumTitle?.toString().orEmpty()
+        Log.d(TAG, "syncState: emitting station=${stationJson.optString("name")} artist=$artist title=$title isPlaying=${c.isPlaying}")
+        // Same mapping Dart uses to reconstruct a RadioStation in
+        // NativeAudioPlayerService._onSyncState.
+        val stationMap = jsonToMap(stationJson)
+        sendEvent(
+            mapOf(
+                "type" to "syncState",
+                "station" to stationMap,
+                "title" to title,
+                "artist" to artist,
+                "album" to album,
+                "albumArtUrl" to artworkUri,
+                "isPlaying" to c.isPlaying,
+            )
+        )
+        // Mirror the playback state event so any listener that only
+        // watches state (not syncState) flips to the right value.
+        sendEvent(
+            mapOf(
+                "type" to "state",
+                "state" to if (c.isPlaying) "playing" else "paused",
+            )
+        )
+    }
+
+    /// Walk the same SharedPreferences lists PlaybackService uses to
+    /// serve the AA browse tree. Returns the raw JSONObject for the
+    /// matching station, or null when nothing matches. Favorites /
+    /// recent / genre_stations.* are the only places a station JSON
+    /// lives — if the user played something not in any of those (edge
+    /// case), we return null and skip the sync.
+    private fun findStationJson(ctx: Context, mediaId: String): JSONObject? {
+        val uuid = mediaId.removePrefix(PlaybackService.STATION_PREFIX)
+        if (uuid.isEmpty()) return null
+        val prefs = ctx.getSharedPreferences(
+            PlaybackService.PREFS_NAME, Context.MODE_PRIVATE
+        )
+        // Fixed-key lists first (common hit path).
+        for (key in listOf(PlaybackService.KEY_FAVORITES, PlaybackService.KEY_RECENT)) {
+            findStationInArray(prefs.getString(key, null), uuid)?.let { return it }
+        }
+        // Genre lists — keyed by tag.
+        for ((k, v) in prefs.all) {
+            if (!k.startsWith("genre_stations.")) continue
+            findStationInArray(v as? String, uuid)?.let { return it }
+        }
+        return null
+    }
+
+    private fun findStationInArray(json: String?, uuid: String): JSONObject? {
+        if (json.isNullOrEmpty()) return null
+        val arr = try { JSONArray(json) } catch (_: Throwable) { return null }
+        for (i in 0 until arr.length()) {
+            val obj = arr.optJSONObject(i) ?: continue
+            if (obj.optString("stationuuid") == uuid) return obj
+        }
+        return null
+    }
+
+    private fun jsonToMap(obj: JSONObject): Map<String, Any?> {
+        val out = mutableMapOf<String, Any?>()
+        val keys = obj.keys()
+        while (keys.hasNext()) {
+            val k = keys.next()
+            val v = obj.opt(k)
+            out[k] = if (v === JSONObject.NULL) null else v
+        }
+        return out
+    }
+
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         Log.d(TAG, "onDetachedFromEngine")
+        isFlutterAttached = false
         controllerFuture?.let { MediaController.releaseFuture(it) }
         controllerFuture = null
         controller = null
@@ -116,6 +237,20 @@ class AudioPlayerPlugin :
                 // Dart retries this until the plugin is registered AND the
                 // controller is connected. Returning true here signals both.
                 result.success(controller != null)
+            }
+            "requestSync" -> {
+                // Called by Dart once it has subscribed to the event channel.
+                // Necessary because the auto-emit in MediaController.connect's
+                // future callback can fire before the eventSink is attached,
+                // silently dropping the syncState event. Calling this after
+                // onListen guarantees delivery.
+                val c = controller
+                if (c != null) {
+                    emitSyncStateIfPlaying(c)
+                } else {
+                    Log.d(TAG, "requestSync: controller not connected yet")
+                }
+                result.success(null)
             }
             "playStation" -> {
                 val url = call.argument<String>("url") ?: ""
@@ -172,10 +307,14 @@ class AudioPlayerPlugin :
                 // Update the current MediaItem's artworkUri without
                 // interrupting playback. media3's replaceMediaItem is safe
                 // for in-place metadata changes when the URI is unchanged.
-                // Android Auto picks up the new art via onMediaMetadataChanged.
+                // Android Auto picks up the new art from MediaMetadata.
                 val url = call.argument<String>("url") ?: ""
                 val c = controller
                 val current = c?.currentMediaItem
+                Log.d(
+                    TAG,
+                    "setAlbumArt url='$url' controller=${c != null} currentItem=${current != null}"
+                )
                 if (c != null && current != null) {
                     val artUri = if (url.isEmpty()) null else android.net.Uri.parse(url)
                     val newMeta = current.mediaMetadata.buildUpon()
@@ -183,11 +322,54 @@ class AudioPlayerPlugin :
                         .build()
                     val updated = current.buildUpon().setMediaMetadata(newMeta).build()
                     c.replaceMediaItem(c.currentMediaItemIndex, updated)
+                    Log.d(TAG, "setAlbumArt -> replaceMediaItem done")
                 }
+                result.success(null)
+            }
+            "syncLastfmSession" -> {
+                val sessionKey = call.argument<String>("sessionKey") ?: ""
+                val username = call.argument<String>("username") ?: ""
+                writePref(PlaybackService.KEY_LASTFM_SESSION, sessionKey)
+                writePref(PlaybackService.KEY_LASTFM_USERNAME, username)
+                // Poke the service so it refreshes the love button and
+                // clears the cache if the user just logged out.
+                controller?.sendCustomCommand(
+                    SessionCommand(PlaybackService.CMD_DART_AUTH_CHANGED, Bundle.EMPTY),
+                    Bundle().apply { putBoolean("loggedIn", sessionKey.isNotEmpty()) }
+                )
+                result.success(null)
+            }
+            "syncLastfmConfig" -> {
+                val apiKey = call.argument<String>("apiKey") ?: ""
+                val apiSecret = call.argument<String>("apiSecret") ?: ""
+                writePref(PlaybackService.KEY_LASTFM_API_KEY, apiKey)
+                writePref(PlaybackService.KEY_LASTFM_API_SECRET, apiSecret)
+                result.success(null)
+            }
+            "setLovedState" -> {
+                val artist = call.argument<String>("artist") ?: ""
+                val title = call.argument<String>("title") ?: ""
+                val loved = call.argument<Boolean>("loved") ?: false
+                controller?.sendCustomCommand(
+                    SessionCommand(PlaybackService.CMD_DART_SET_LOVED, Bundle.EMPTY),
+                    Bundle().apply {
+                        putString("artist", artist)
+                        putString("title", title)
+                        putBoolean("loved", loved)
+                    }
+                )
                 result.success(null)
             }
             else -> result.notImplemented()
         }
+    }
+
+    private fun writePref(key: String, value: String) {
+        val ctx = context ?: return
+        ctx.getSharedPreferences(PlaybackService.PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(key, value)
+            .apply()
     }
 
     private fun playUrl(url: String, uuid: String, name: String, favicon: String) {
@@ -303,13 +485,13 @@ class AudioPlayerPlugin :
     }
 
     private fun bundleToEvent(action: String, args: Bundle): Map<String, Any?>? {
-        val result = mutableMapOf<String, Any?>("type" to "metadata")
         // Fold bundle contents directly into the event payload — Dart's
         // _onMetadataEvent picks up whichever fields are present, matching
         // the old plugin's flat-map behavior.
         if (action == PlaybackService.CMD_STREAM_INFO ||
             action == PlaybackService.CMD_RAW_METADATA
         ) {
+            val result = mutableMapOf<String, Any?>("type" to "metadata")
             result["identifier"] = args.getString("identifier")
                 ?: if (action == PlaybackService.CMD_STREAM_INFO) "stream/info" else "raw"
             args.getString("title")?.let { result["title"] = it }
@@ -327,6 +509,14 @@ class AudioPlayerPlugin :
                 if (br > 0) result["bitrate"] = br
             }
             return result
+        }
+        if (action == PlaybackService.CMD_LOVED_STATE) {
+            return mapOf(
+                "type" to "lovedStateChanged",
+                "artist" to args.getString("artist"),
+                "title" to args.getString("title"),
+                "loved" to args.getBoolean("loved", false),
+            )
         }
         return null
     }
