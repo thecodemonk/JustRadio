@@ -4,17 +4,112 @@ import '../../app.dart';
 import '../../core/theme/app_theme.dart';
 import '../../data/models/radio_station.dart';
 import '../../data/services/favorites_io_service.dart';
+import '../../providers/audio_player_provider.dart';
 import '../../providers/favorites_provider.dart';
 import '../search/widgets/station_list_tile.dart';
 
-enum _FavoritesMenuAction { import, export, clear }
+enum _FavoritesMenuAction { addCustom, import, export, clear }
 
-class FavoritesScreen extends ConsumerWidget {
+enum _FavoritesSort { nameAsc, nameDesc, recent }
+
+const int _kMaxTagChips = 12;
+
+class FavoritesScreen extends ConsumerStatefulWidget {
   const FavoritesScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<FavoritesScreen> createState() => _FavoritesScreenState();
+}
+
+class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
+  final TextEditingController _searchController = TextEditingController();
+  String _query = '';
+  final Set<String> _selectedTags = <String>{};
+  _FavoritesSort _sort = _FavoritesSort.nameAsc;
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  bool get _hasActiveFilter => _query.trim().isNotEmpty || _selectedTags.isNotEmpty;
+
+  void _clearFilters() {
+    setState(() {
+      _searchController.clear();
+      _query = '';
+      _selectedTags.clear();
+    });
+  }
+
+  List<String> _topTags(List<RadioStation> favorites) {
+    final counts = <String, int>{};
+    for (final s in favorites) {
+      for (final t in s.tagList) {
+        final key = t.toLowerCase().trim();
+        if (key.isEmpty) continue;
+        counts[key] = (counts[key] ?? 0) + 1;
+      }
+    }
+    final entries = counts.entries.toList()
+      ..sort((a, b) {
+        final byCount = b.value.compareTo(a.value);
+        return byCount != 0 ? byCount : a.key.compareTo(b.key);
+      });
+    return entries.take(_kMaxTagChips).map((e) => e.key).toList();
+  }
+
+  List<RadioStation> _filterAndSort(List<RadioStation> favorites) {
+    final q = _query.trim().toLowerCase();
+    final hasQuery = q.isNotEmpty;
+    final hasTags = _selectedTags.isNotEmpty;
+
+    final indexed = <(RadioStation, int)>[
+      for (var i = 0; i < favorites.length; i++) (favorites[i], i),
+    ];
+
+    final filtered = indexed.where((entry) {
+      final s = entry.$1;
+      if (hasQuery) {
+        final hit = s.name.toLowerCase().contains(q) ||
+            s.tags.toLowerCase().contains(q) ||
+            s.country.toLowerCase().contains(q);
+        if (!hit) return false;
+      }
+      if (hasTags) {
+        final stationTags = s.tagList
+            .map((t) => t.toLowerCase().trim())
+            .where((t) => t.isNotEmpty)
+            .toSet();
+        if (!_selectedTags.any(stationTags.contains)) return false;
+      }
+      return true;
+    }).toList();
+
+    switch (_sort) {
+      case _FavoritesSort.nameAsc:
+        filtered.sort((a, b) =>
+            a.$1.name.toLowerCase().compareTo(b.$1.name.toLowerCase()));
+      case _FavoritesSort.nameDesc:
+        filtered.sort((a, b) =>
+            b.$1.name.toLowerCase().compareTo(a.$1.name.toLowerCase()));
+      case _FavoritesSort.recent:
+        filtered.sort((a, b) => b.$2.compareTo(a.$2));
+    }
+
+    return filtered.map((e) => e.$1).toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final favorites = ref.watch(favoritesProvider);
+    final isDesktop =
+        MediaQuery.of(context).size.width >= kDesktopBreakpoint;
+    final displayed = _filterAndSort(favorites);
+    final showSearch = favorites.isNotEmpty;
+    final showTagChips = isDesktop && favorites.isNotEmpty;
+    final tagChips = showTagChips ? _topTags(favorites) : const <String>[];
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -47,9 +142,18 @@ class FavoritesScreen extends ConsumerWidget {
                     tooltip: 'More',
                     icon: Icon(Icons.more_vert,
                         color: AppColors.onBgMuted(0.6)),
-                    onSelected: (action) =>
-                        _handleMenuAction(context, ref, action),
+                    onSelected: _handleMenuAction,
                     itemBuilder: (context) => [
+                      const PopupMenuItem(
+                        value: _FavoritesMenuAction.addCustom,
+                        child: ListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(Icons.add),
+                          title: Text('Add custom stream...'),
+                        ),
+                      ),
+                      const PopupMenuDivider(),
                       const PopupMenuItem(
                         value: _FavoritesMenuAction.import,
                         child: ListTile(
@@ -85,23 +189,135 @@ class FavoritesScreen extends ConsumerWidget {
                 ],
               ),
             ),
+            if (showSearch)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+                child: Row(
+                  children: [
+                    Expanded(child: _buildSearchField()),
+                    if (isDesktop) ...[
+                      const SizedBox(width: 8),
+                      _buildSortButton(),
+                    ],
+                  ],
+                ),
+              ),
+            if (showTagChips && tagChips.length >= 2)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+                child: _buildTagChipRow(tagChips),
+              ),
             Expanded(
               child: favorites.isEmpty
-                  ? _buildEmptyState(context)
-                  : _buildFavoritesList(context, ref, favorites),
+                  ? _buildEmptyState()
+                  : displayed.isEmpty
+                      ? _buildNoMatchesState()
+                      : _buildFavoritesList(displayed),
             ),
           ],
         ),
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showAddCustomDialog(context, ref),
-        icon: const Icon(Icons.add),
-        label: const Text('Add stream'),
+    );
+  }
+
+  // Parent shell uses extendBody:true and inner Scaffold's MediaQuery does
+  // not subtract the parent's bottom UI, so we lift content above
+  // [system gesture inset] + [NavigationBar] + [MiniPlayer when playing].
+  double _bottomShellInset(BuildContext context, WidgetRef ref) {
+    const navBarHeight = 80.0;
+    const miniPlayerHeight = 72.0;
+    const breathingRoom = 12.0;
+    final systemBottom = MediaQuery.viewPaddingOf(context).bottom;
+    final isPlaying = ref.watch(
+      radioPlayerControllerProvider.select((s) => s.currentStation != null),
+    );
+    return systemBottom +
+        navBarHeight +
+        (isPlaying ? miniPlayerHeight : 0) +
+        breathingRoom;
+  }
+
+  Widget _buildSearchField() {
+    return TextField(
+      controller: _searchController,
+      style: AppTypography.body(14, color: AppColors.onBg),
+      decoration: InputDecoration(
+        hintText: 'Search favorites…',
+        prefixIcon: Icon(Icons.search,
+            size: 18, color: AppColors.onBgMuted(0.5)),
+        suffixIcon: _query.isNotEmpty
+            ? IconButton(
+                icon: Icon(Icons.clear,
+                    size: 18, color: AppColors.onBgMuted(0.5)),
+                onPressed: () {
+                  _searchController.clear();
+                  setState(() => _query = '');
+                },
+              )
+            : null,
+      ),
+      onChanged: (value) => setState(() => _query = value),
+    );
+  }
+
+  Widget _buildSortButton() {
+    return PopupMenuButton<_FavoritesSort>(
+      tooltip: 'Sort',
+      initialValue: _sort,
+      onSelected: (s) => setState(() => _sort = s),
+      icon: Icon(Icons.sort, color: AppColors.onBgMuted(0.7)),
+      itemBuilder: (context) => [
+        _sortMenuItem(_FavoritesSort.nameAsc, 'Name (A → Z)'),
+        _sortMenuItem(_FavoritesSort.nameDesc, 'Name (Z → A)'),
+        _sortMenuItem(_FavoritesSort.recent, 'Recently added'),
+      ],
+    );
+  }
+
+  PopupMenuItem<_FavoritesSort> _sortMenuItem(
+      _FavoritesSort value, String label) {
+    final selected = _sort == value;
+    return PopupMenuItem(
+      value: value,
+      child: Row(
+        children: [
+          SizedBox(
+            width: 24,
+            child: selected
+                ? Icon(Icons.check, size: 16, color: AppColors.accent)
+                : null,
+          ),
+          Text(label),
+        ],
       ),
     );
   }
 
-  Widget _buildEmptyState(BuildContext context) {
+  Widget _buildTagChipRow(List<String> tags) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final tag in tags)
+          _TagChip(
+            label: tag,
+            selected: _selectedTags.contains(tag),
+            onTap: () => setState(() {
+              if (!_selectedTags.add(tag)) _selectedTags.remove(tag);
+            }),
+          ),
+        if (_selectedTags.isNotEmpty)
+          _TagChip(
+            label: 'Clear',
+            selected: false,
+            isClearAction: true,
+            onTap: () => setState(_selectedTags.clear),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildEmptyState() {
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -124,16 +340,40 @@ class FavoritesScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildFavoritesList(
-    BuildContext context,
-    WidgetRef ref,
-    List<RadioStation> favorites,
-  ) {
+  Widget _buildNoMatchesState() {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.search_off,
+              size: 48, color: AppColors.onBgMuted(0.4)),
+          const SizedBox(height: 12),
+          Text('No matches', style: AppTypography.display(20)),
+          const SizedBox(height: 6),
+          Text(
+            'No favorites match the current filter.',
+            style: AppTypography.body(13, color: AppColors.onBgMuted(0.55)),
+            textAlign: TextAlign.center,
+          ),
+          if (_hasActiveFilter) ...[
+            const SizedBox(height: 12),
+            TextButton(
+              onPressed: _clearFilters,
+              child: const Text('Clear filters'),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFavoritesList(List<RadioStation> stations) {
+    final bottomPad = _bottomShellInset(context, ref);
     return ListView.builder(
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 140),
-      itemCount: favorites.length,
+      padding: EdgeInsets.fromLTRB(12, 0, 12, bottomPad),
+      itemCount: stations.length,
       itemBuilder: (context, index) {
-        final station = favorites[index];
+        final station = stations[index];
         return Dismissible(
           key: Key(station.stationuuid),
           direction: DismissDirection.endToStart,
@@ -174,7 +414,7 @@ class FavoritesScreen extends ConsumerWidget {
     );
   }
 
-  void _showAddCustomDialog(BuildContext context, WidgetRef ref) {
+  void _showAddCustomDialog() {
     showDialog(
       context: context,
       builder: (context) => _AddCustomStreamDialog(
@@ -184,26 +424,24 @@ class FavoritesScreen extends ConsumerWidget {
     );
   }
 
-  Future<void> _handleMenuAction(
-    BuildContext context,
-    WidgetRef ref,
-    _FavoritesMenuAction action,
-  ) async {
+  Future<void> _handleMenuAction(_FavoritesMenuAction action) async {
     switch (action) {
+      case _FavoritesMenuAction.addCustom:
+        _showAddCustomDialog();
       case _FavoritesMenuAction.import:
-        await _importFavorites(context, ref);
+        await _importFavorites();
       case _FavoritesMenuAction.export:
-        await _exportFavorites(context, ref);
+        await _exportFavorites();
       case _FavoritesMenuAction.clear:
-        _showClearDialog(context, ref);
+        _showClearDialog();
     }
   }
 
-  Future<void> _importFavorites(BuildContext context, WidgetRef ref) async {
+  Future<void> _importFavorites() async {
     final messenger = ScaffoldMessenger.of(context);
     try {
       final stations = await FavoritesIoService().importFromFile();
-      if (stations == null) return; // user cancelled
+      if (stations == null) return;
       if (stations.isEmpty) {
         messenger.showSnackBar(
           const SnackBar(content: Text('No stations found in file')),
@@ -230,13 +468,13 @@ class FavoritesScreen extends ConsumerWidget {
     }
   }
 
-  Future<void> _exportFavorites(BuildContext context, WidgetRef ref) async {
+  Future<void> _exportFavorites() async {
     final messenger = ScaffoldMessenger.of(context);
     final favorites = ref.read(favoritesProvider);
     if (favorites.isEmpty) return;
     try {
       final path = await FavoritesIoService().exportToFile(favorites);
-      if (path == null) return; // user cancelled
+      if (path == null) return;
       messenger.showSnackBar(
         SnackBar(
           content: Text(
@@ -250,7 +488,7 @@ class FavoritesScreen extends ConsumerWidget {
     }
   }
 
-  void _showClearDialog(BuildContext context, WidgetRef ref) {
+  void _showClearDialog() {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -275,6 +513,52 @@ class FavoritesScreen extends ConsumerWidget {
             child: const Text('Clear All'),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _TagChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final bool isClearAction;
+  final VoidCallback onTap;
+  const _TagChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+    this.isClearAction = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      shape: const StadiumBorder(),
+      child: InkWell(
+        customBorder: const StadiumBorder(),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+          decoration: ShapeDecoration(
+            shape: const StadiumBorder(),
+            color: selected
+                ? AppColors.accent
+                : isClearAction
+                    ? AppColors.live.withValues(alpha: 0.18)
+                    : AppColors.surface(0.05),
+          ),
+          child: Text(
+            label,
+            style: AppTypography.body(12,
+                weight: selected ? FontWeight.w500 : FontWeight.w400,
+                color: selected
+                    ? const Color(0xFF0A0A0A)
+                    : isClearAction
+                        ? AppColors.live
+                        : AppColors.onBgMuted(0.75)),
+          ),
+        ),
       ),
     );
   }
